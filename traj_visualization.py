@@ -1,11 +1,13 @@
 import argparse
 import json
+import time
+from scipy.interpolate import CubicSpline
 import numpy as np
 import os
 
 import habitat_sim
 from habitat_sim.utils.common import quat_from_coeffs
-from habitat_sim.utils.common import quat_to_magnum
+from scipy.spatial.transform import Rotation
 import cv2
 from habitat_sim.nav import ShortestPath
 
@@ -24,8 +26,9 @@ def visualize_trajectory(json_file, scene_directory):
             "scene": scene_file,
             "default_agent": 0,
             "sensor_height": 0.5,
-            "width": 1280,
-            "height": 720,
+            "sensor_width": 640,
+            "width": 640,
+            "height": 320,
         }
         backend_cfg = habitat_sim.SimulatorConfiguration()
         backend_cfg.scene_id = sim_settings["scene"]
@@ -36,6 +39,14 @@ def visualize_trajectory(json_file, scene_directory):
         sensor_cfg.position = [0, sim_settings["sensor_height"], 0]
         sensor_cfg.sensor_type = habitat_sim.SensorType.COLOR
         sensor_cfg.uuid = "color_sensor"
+        color_sensor_spec = habitat_sim.CameraSensorSpec()
+        # color_sensor_spec.uuid = "color_sensor"
+        color_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
+
+        color_sensor_spec.hfov = np.pi / 3
+        color_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
+        color_sensor_spec.channels_first = True
+        color_sensor_spec.encoding = "png"
 
         agent_cfg = habitat_sim.agent.AgentConfiguration()
         agent_cfg.sensor_specifications = [sensor_cfg]
@@ -47,30 +58,27 @@ def visualize_trajectory(json_file, scene_directory):
         agent_state = habitat_sim.AgentState()
         agent = sim.initialize_agent(sim_settings["default_agent"], agent_state)
 
+        def catmull_rom_spline(points, num_interpolated_points):
+            points = np.array(points)
+            n = len(points)
+            t = np.linspace(0, n - 1, num_interpolated_points)
+            tck_x = CubicSpline(np.arange(n), points[:, 0], bc_type='clamped')
+            tck_y = CubicSpline(np.arange(n), points[:, 1], bc_type='clamped')
+            tck_z = CubicSpline(np.arange(n), points[:, 2], bc_type='clamped')
+
+            return np.column_stack((tck_x(t), tck_y(t), tck_z(t)))
+
         # 获取路径
         path = episode["reference_path"]
+        num_interpolated_points = 200  # 调整此值以更改插入的点数
+        interpolated_path = catmull_rom_spline(np.array(path), num_interpolated_points)
 
-        adjusted_path = []
+        agent_state = habitat_sim.AgentState()
+        agent.set_state(agent_state, reset_sensors=True)
         # 沿路径移动相机并捕捉图像
-        shortest_path = ShortestPath()
-        for i in range(len(path) - 1):
-            position = np.array(path[i])
-            next_position = np.array(path[i + 1])
-
-            # 创建一个ShortestPath对象，设置起始点和目标点
-            shortest_path.requested_start = position
-            shortest_path.requested_end = next_position
-
-            # 计算两个相邻点之间的最短路径
-            sim.pathfinder.find_path(shortest_path)
-
-            # 将找到的路径点添加到调整后的路径中
-            for point in shortest_path.points:
-                adjusted_path.append(point)
-
-        for point in adjusted_path:
+        for point in interpolated_path:
             agent_state = habitat_sim.AgentState()
-            agent_state.position = np.array([point[0], point[1], point[2]])
+            agent_state.position = point
             agent_state.rotation = quat_from_coeffs([-0.0, 0.9659258262890683, -0.0, -0.25881904510252063])
             agent.set_state(agent_state, reset_sensors=True)
 
@@ -79,13 +87,6 @@ def visualize_trajectory(json_file, scene_directory):
             rgb_observation = observations["color_sensor"]
             cv2.imshow("RGB", rgb_observation)
             cv2.waitKey(1)
-
-        cv2.destroyAllWindows()
-
-
-        # 关闭模拟器和窗口
-        sim.close()
-        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
