@@ -6,7 +6,7 @@ import os
 import habitat_sim
 from habitat_sim.utils.common import quat_from_coeffs
 import cv2
-
+from scipy.spatial.transform import Rotation
 
 
 def visualize_trajectory(json_file, scene_directory):
@@ -71,10 +71,24 @@ def visualize_trajectory(json_file, scene_directory):
         agent_state = habitat_sim.AgentState()
         agent.set_state(agent_state, reset_sensors=True)
         # 沿路径移动相机并捕捉图像
-        for point in interpolated_path:
+        for i, point in enumerate(interpolated_path[:-1]):
+            next_point = interpolated_path[i + 1]
+            direction_vector = next_point - point
+            direction_vector /= np.linalg.norm(direction_vector)
+
+            # 计算相机朝向（四元数）
+            up_vector = np.array([0, 1, 0])
+            right_vector = np.cross(direction_vector, up_vector)
+            right_vector /= np.linalg.norm(right_vector)
+            up_vector = np.cross(right_vector, direction_vector)
+
+            rotation_matrix = np.stack([right_vector, up_vector, -direction_vector], axis=1)
+            rotation = Rotation.from_matrix(rotation_matrix)
+            quaternion = rotation.as_quat()
+
             agent_state = habitat_sim.AgentState()
             agent_state.position = point
-            agent_state.rotation = quat_from_coeffs([-0.0, 0.9659258262890683, -0.0, -0.25881904510252063])
+            agent_state.rotation = quat_from_coeffs(quaternion)
             agent.set_state(agent_state, reset_sensors=True)
 
             # 捕捉并显示图像
