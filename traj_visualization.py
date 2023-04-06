@@ -9,23 +9,34 @@ import cv2
 from scipy.spatial.transform import Rotation
 
 
-def visualize_trajectory(json_file, scene_directory):
+def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
     # 加载JSON文件
-    with open(json_file, 'r') as f:
-        data = json.load(f)
+    with open(pred_json_file, 'r') as f:
+        pred_data = json.load(f)
 
-    for episode in data["episodes"]:
-        # 根据scene_id获取glb文件路径
-        scene_file = os.path.join(scene_directory, episode["scene_id"])
+    with open(val_seen_json_file, 'r') as f:
+        val_seen_data = json.load(f)
+
+    for pred_episode_id, pred_episode_steps in pred_data.items():
+        val_episode = None
+        for episode in val_seen_data["episodes"]:
+            if str(episode["episode_id"]) == pred_episode_id:
+                val_episode = episode
+                break
+
+        if val_episode is None:
+            print(f"Episode {pred_episode_id} not found in val_seen.json")
+            continue
+        scene_file = os.path.join(scene_directory, val_episode["scene_id"])
 
         # 创建模拟器
         sim_settings = {
             "scene": scene_file,
             "default_agent": 0,
             "sensor_height": 0.5,
-            "sensor_width": 640,
-            "width": 640,
-            "height": 320,
+            "sensor_width": 320,
+            "width": 320,
+            "height": 240,
         }
         backend_cfg = habitat_sim.SimulatorConfiguration()
         backend_cfg.scene_id = sim_settings["scene"]
@@ -64,14 +75,14 @@ def visualize_trajectory(json_file, scene_directory):
             return np.column_stack((tck_x(t), tck_y(t), tck_z(t)))
 
         # 获取路径
-        if "reference_path" not in episode:
-            path = []
-        else:
-            path = episode["reference_path"]
+        path = [step["position"] for step in pred_episode_steps if not step["stop"]]
 
         if not path:
             continue
-        num_interpolated_points = 200
+
+        if not path:
+            continue
+        num_interpolated_points = 300
         interpolated_path = catmull_rom_spline(np.array(path), num_interpolated_points)
 
         agent_state = habitat_sim.AgentState()
@@ -106,7 +117,8 @@ def visualize_trajectory(json_file, scene_directory):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--json', type=str, required=True, help='Path to the JSON file')
+    parser.add_argument('--pred-json', type=str, required=True, help='Path to the pred_val_seen JSON file')
+    parser.add_argument('--val-json', type=str, required=True, help='Path to the JSON file')
     parser.add_argument('--scene-dir', type=str, required=True, help='Path to the directory containing glb files')
     args = parser.parse_args()
-    visualize_trajectory(args.json, args.scene_dir)
+    visualize_trajectory(args.pred_json, args.val_json, args.scene_dir)
