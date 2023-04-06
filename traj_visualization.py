@@ -64,7 +64,13 @@ def visualize_trajectory(json_file, scene_directory):
             return np.column_stack((tck_x(t), tck_y(t), tck_z(t)))
 
         # 获取路径
-        path = episode["reference_path"]
+        if "reference_path" not in episode:
+            path = []
+        else:
+            path = episode["reference_path"]
+
+        if not path:
+            continue
         num_interpolated_points = 200
         interpolated_path = catmull_rom_spline(np.array(path), num_interpolated_points)
 
@@ -103,5 +109,4 @@ if __name__ == "__main__":
     parser.add_argument('--json', type=str, required=True, help='Path to the JSON file')
     parser.add_argument('--scene-dir', type=str, required=True, help='Path to the directory containing glb files')
     args = parser.parse_args()
-
     visualize_trajectory(args.json, args.scene_dir)
