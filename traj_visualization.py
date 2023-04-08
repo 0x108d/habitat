@@ -89,7 +89,7 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         # 获取导航网格的边界
         nav_bounds_min, nav_bounds_max = sim.pathfinder.get_bounds()
         map_size = (500, 500)
-        blank_map = np.zeros((map_size[1], map_size[0], 3), dtype=np.uint8)
+        blank_map = np.zeros((map_size[1], map_size[0], 3), dtype=np.uint8)+255
 
         for i in range(0, map_size[0], 2):
             for j in range(0, map_size[1], 2):
@@ -98,6 +98,8 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
                                         nav_bounds_min[2] + (j / map_size[1]) * (
                                                 nav_bounds_max[2] - nav_bounds_min[2])])
                 if sim.pathfinder.is_navigable(world_coord):
+                    blank_map[i, j] = [0,0,0]
+                else:
                     blank_map[i, j] = 255
 
         # 获取路径
@@ -154,7 +156,3 @@ if __name__ == "__main__":
     parser.add_argument('--scene-dir', type=str, required=True, help='Path to the directory containing glb files')
     args = parser.parse_args()
     visualize_trajectory(args.pred_json, args.val_json, args.scene_dir)
-
-    # fig, ax = plt.subplots()
-    # ax.axis('off')
-    # fig.canvas.set_window_title('Habitat Map Visualization')
