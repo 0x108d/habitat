@@ -22,7 +22,12 @@ def catmull_rom_spline(points, num_interpolated_points):
 def world_to_map_coordinates(point, map_size, nav_bounds_min, nav_bounds_max):
     x = ((point[0] - nav_bounds_min[0]) / (nav_bounds_max[0] - nav_bounds_min[0])) * map_size[0]
     y = ((point[2] - nav_bounds_min[2]) / (nav_bounds_max[2] - nav_bounds_min[2])) * map_size[1]
-    return int(x), int(y)
+
+    # Clamp coordinates to map boundaries
+    x = max(0, min(int(x), map_size[0] - 1))
+    y = max(0, min(int(y), map_size[1] - 1))
+
+    return x, y
 
 
 def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
@@ -88,26 +93,32 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         sim.pathfinder.load_nav_mesh(navmesh_file)
         # 获取导航网格的边界
         nav_bounds_min, nav_bounds_max = sim.pathfinder.get_bounds()
-        map_size = (500, 500)
-        blank_map = np.zeros((map_size[1], map_size[0], 3), dtype=np.uint8)+255
 
-        for i in range(0, map_size[0], 2):
-            for j in range(0, map_size[1], 2):
-                world_coord = np.array([nav_bounds_min[0] + (i / map_size[0]) * (nav_bounds_max[0] - nav_bounds_min[0]),
-                                        0,
-                                        nav_bounds_min[2] + (j / map_size[1]) * (
-                                                nav_bounds_max[2] - nav_bounds_min[2])])
-                if sim.pathfinder.is_navigable(world_coord):
-                    blank_map[i, j] = [0,0,0]
-                else:
-                    blank_map[i, j] = 255
+        map_height = 320
+        map_width = int(
+            map_height * ((nav_bounds_max[0] - nav_bounds_min[0]) / (nav_bounds_max[2] - nav_bounds_min[2])))
+        map_size = (map_width, map_height)
+
+        blank_map = np.zeros((map_size[1], map_size[0], 3), dtype=np.uint8)
 
         # 获取路径
         path = [step["position"] for step in pred_episode_steps if not step["stop"]]
 
+        for i in range(0, map_size[0], 1):
+            for j in range(0, map_size[1], 1):
+                world_coord = np.array([nav_bounds_min[0] + (i / map_size[0]) * (nav_bounds_max[0] - nav_bounds_min[0]),
+                                        0,
+                                        nav_bounds_min[2] + (j / map_size[1]) * (
+                                                nav_bounds_max[2] - nav_bounds_min[2])])
+                x, y = world_to_map_coordinates(world_coord, map_size, nav_bounds_min, nav_bounds_max)
+                if sim.pathfinder.is_navigable(world_coord):
+                    blank_map[y, x] = [0, 0, 0]
+                else:
+                    blank_map[y, x] = 255
+
         for step in path:
             x, y = world_to_map_coordinates(step, map_size, nav_bounds_min, nav_bounds_max)
-            cv2.circle(blank_map, (y, x), 2, (0, 0, 255), -1)
+            cv2.circle(blank_map, (x, y), 2, (0, 0, 255), -1)
 
         if not path:
             continue
@@ -139,13 +150,15 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
 
             x, y = world_to_map_coordinates(point, map_size, nav_bounds_min, nav_bounds_max)
 
-            cv2.circle(blank_map, (y, x), 5, (0, 255, 0), -1)
+            cv2.circle(blank_map, (x, y), 5, (0, 255, 0), -1)
 
             # 捕捉并显示图像
             observations = sim.get_sensor_observations()
             rgb_observation = observations["color_sensor"]
             cv2.imshow("RGB", rgb_observation)
-            cv2.imshow("2D Map", blank_map)
+            # cv2.imshow("2D Map", blank_map)
+            resized_map = cv2.resize(blank_map, (map_size[0] * 2, map_size[1] * 2), interpolation=cv2.INTER_AREA)
+            cv2.imshow("2D Map", resized_map)
             cv2.waitKey(75)
 
 
