@@ -19,15 +19,11 @@ def catmull_rom_spline(points, num_interpolated_points):
     return np.column_stack((tck_x(t), tck_y(t), tck_z(t)))
 
 
-def world_to_map_coordinates(point, map_size, nav_bounds_min, nav_bounds_max):
-    x = ((point[0] - nav_bounds_min[0]) / (nav_bounds_max[0] - nav_bounds_min[0])) * map_size[0]
-    y = ((point[2] - nav_bounds_min[2]) / (nav_bounds_max[2] - nav_bounds_min[2])) * map_size[1]
-
-    # Clamp coordinates to map boundaries
-    x = max(0, min(int(x), map_size[0] - 1))
-    y = max(0, min(int(y), map_size[1] - 1))
-
-    return x, y
+def world_to_map_coordinates(world_coord, map_size, nav_bounds_min, nav_bounds_max):
+    map_scale = (map_size[1] / (nav_bounds_max[2] - nav_bounds_min[2]), map_size[0] / (nav_bounds_max[0] - nav_bounds_min[0]))
+    map_coord = ((world_coord[0] - nav_bounds_min[0]) * map_scale[1], (world_coord[2] - nav_bounds_min[2]) * map_scale[0])
+    map_coord = (int(round(map_coord[0])), int(round(map_coord[1])))
+    return map_coord
 
 
 def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
@@ -150,7 +146,7 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
 
             x, y = world_to_map_coordinates(point, map_size, nav_bounds_min, nav_bounds_max)
 
-            cv2.circle(blank_map, (x, y), 5, (0, 255, 0), -1)
+            cv2.circle(blank_map, (x, y), 1, (0, 255, 0), -1)
 
             # 捕捉并显示图像
             observations = sim.get_sensor_observations()

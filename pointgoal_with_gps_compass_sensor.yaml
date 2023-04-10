@@ -1,0 +1,12 @@
+sensors:
+  - type: "PointGoalSensor"
+    uuid: "pointgoal"
+    goal_format: "polar_coordinates"
+    max_sensor_noise: 0.1
+    use_gps: True
+  - type: "GPSSensor"
+    uuid: "gps"
+    position_noise: 0.1
+  - type: "CompassSensor"
+    uuid: "compass"
+    angle_noise: 0.1
