@@ -8,6 +8,7 @@ from habitat_sim.utils.common import quat_from_coeffs
 import cv2
 from scipy.spatial.transform import Rotation
 
+
 def catmull_rom_spline(points, num_interpolated_points):
     points = np.array(points)
     n = len(points)
@@ -19,8 +20,10 @@ def catmull_rom_spline(points, num_interpolated_points):
 
 
 def world_to_map_coordinates(world_coord, map_size, nav_bounds_min, nav_bounds_max):
-    map_scale = (map_size[1] / (nav_bounds_max[2] - nav_bounds_min[2]), map_size[0] / (nav_bounds_max[0] - nav_bounds_min[0]))
-    map_coord = ((world_coord[0] - nav_bounds_min[0]) * map_scale[1], (world_coord[2] - nav_bounds_min[2]) * map_scale[0])
+    map_scale = (
+        map_size[1] / (nav_bounds_max[2] - nav_bounds_min[2]), map_size[0] / (nav_bounds_max[0] - nav_bounds_min[0]))
+    map_coord = (
+        (world_coord[0] - nav_bounds_min[0]) * map_scale[1], (world_coord[2] - nav_bounds_min[2]) * map_scale[0])
     map_coord = (int(round(map_coord[0])), int(round(map_coord[1])))
     return map_coord
 
@@ -99,14 +102,26 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         # 获取路径
         path = [step["position"] for step in pred_episode_steps if not step["stop"]]
 
+        min_height = 0
+        max_height = 10
+        height_samples = 10  # Number of height samples to take within the range
+
         for i in range(0, map_size[0], 1):
             for j in range(0, map_size[1], 1):
-                world_coord = np.array([nav_bounds_min[0] + (i / map_size[0]) * (nav_bounds_max[0] - nav_bounds_min[0]),
-                                        0,
-                                        nav_bounds_min[2] + (j / map_size[1]) * (
-                                                nav_bounds_max[2] - nav_bounds_min[2])])
-                x, y = world_to_map_coordinates(world_coord, map_size, nav_bounds_min, nav_bounds_max)
-                if sim.pathfinder.is_navigable(world_coord):
+                world_coord_base = np.array(
+                    [nav_bounds_min[0] + (i / map_size[0]) * (nav_bounds_max[0] - nav_bounds_min[0]),
+                     0,
+                     nav_bounds_min[2] + (j / map_size[1]) * (nav_bounds_max[2] - nav_bounds_min[2])])
+                x, y = world_to_map_coordinates(world_coord_base, map_size, nav_bounds_min, nav_bounds_max)
+
+                navigable = False
+                for h in np.linspace(min_height, max_height, height_samples):
+                    world_coord = world_coord_base + np.array([0, h, 0])
+                    if sim.pathfinder.is_navigable(world_coord):
+                        navigable = True
+                        break
+
+                if navigable:
                     blank_map[y, x] = [0, 0, 0]
                 else:
                     blank_map[y, x] = 255
