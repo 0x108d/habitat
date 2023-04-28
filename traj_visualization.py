@@ -10,6 +10,15 @@ from scipy.spatial.transform import Rotation, Slerp
 import scipy.interpolate
 
 
+def world_to_map_coordinates(world_coord, map_size, nav_bounds_min, nav_bounds_max):
+    map_scale = (
+        map_size[1] / (nav_bounds_max[2] - nav_bounds_min[2]), map_size[0] / (nav_bounds_max[0] - nav_bounds_min[0]))
+    map_coord = (
+        (world_coord[0] - nav_bounds_min[0]) * map_scale[1], (world_coord[2] - nav_bounds_min[2]) * map_scale[0])
+    map_coord = (int(round(map_coord[0])), int(round(map_coord[1])))
+    return map_coord
+
+
 def catmull_rom_spline(points, num_interpolated_points):
     points = np.array(points)
     n = len(points)
@@ -71,7 +80,7 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         color_sensor_spec.encoding = "png"
 
         # 添加了topdown的传感器
-        topdown_height = 15
+        topdown_height = 30
         topdown_sensor_spec = habitat_sim.CameraSensorSpec()
         topdown_sensor_spec.uuid = "topdown_sensor"
         topdown_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
@@ -87,15 +96,11 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         sim = habitat_sim.Simulator(cfg)
 
         nav_bounds_min, nav_bounds_max = sim.pathfinder.get_bounds()
-        scene_center_x = (nav_bounds_max[0] + nav_bounds_min[0]) / 2
-        scene_center_z = (nav_bounds_max[2] + nav_bounds_min[2]) / 2
-        topdown_sensor_spec.position = [scene_center_x, topdown_height, scene_center_z]
-
-        observations = sim.get_sensor_observations()
-        topdown_observation = observations["topdown_sensor"]
-        cv2.namedWindow("Top Down View", cv2.WINDOW_NORMAL)
-        cv2.imshow("Top Down View", topdown_observation)
-        cv2.resizeWindow("Top Down View", 2048, 1024)
+        # Calculate map size
+        map_height = 1024
+        map_width = int(
+            map_height * ((nav_bounds_max[0] - nav_bounds_min[0]) / (nav_bounds_max[2] - nav_bounds_min[2])))
+        map_size = (map_width, map_height)
 
         # 3D Path
         # setting camera angle
@@ -157,6 +162,11 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
 
             # Get sensor observations
             observations = sim.get_sensor_observations()
+
+            topdown_observation = observations["topdown_sensor"]
+            cv2.namedWindow("Top Down View", cv2.WINDOW_NORMAL)
+            cv2.imshow("Top Down View", topdown_observation)
+            cv2.resizeWindow("Top Down View", map_size[0], map_size[1])
 
             # Capture and display the image
             rgb_observation = observations["color_sensor"]
