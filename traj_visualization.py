@@ -6,7 +6,9 @@ import os
 import habitat_sim
 from habitat_sim.utils.common import quat_from_coeffs
 import cv2
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation, Slerp
+import scipy.interpolate
+import open3d as o3d
 
 
 def catmull_rom_spline(points, num_interpolated_points):
@@ -19,17 +21,8 @@ def catmull_rom_spline(points, num_interpolated_points):
     return np.column_stack((tck_x(t), tck_y(t), tck_z(t)))
 
 
-def world_to_map_coordinates(world_coord, map_size, nav_bounds_min, nav_bounds_max):
-    map_scale = (
-        map_size[1] / (nav_bounds_max[2] - nav_bounds_min[2]), map_size[0] / (nav_bounds_max[0] - nav_bounds_min[0]))
-    map_coord = (
-        (world_coord[0] - nav_bounds_min[0]) * map_scale[1], (world_coord[2] - nav_bounds_min[2]) * map_scale[0])
-    map_coord = (int(round(map_coord[0])), int(round(map_coord[1])))
-    return map_coord
-
-
 def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
-    # 加载JSON文件
+    # loading JSON file
     with open(pred_json_file, 'r') as f:
         pred_data = json.load(f)
 
@@ -52,7 +45,7 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
 
         print(f"Navmesh file path: {navmesh_file}")
 
-        # 创建模拟器
+        # create simulator
         sim_settings = {
             "scene": scene_file,
             "default_agent": 0,
@@ -84,51 +77,12 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         cfg = habitat_sim.Configuration(backend_cfg, [agent_cfg])
         sim = habitat_sim.Simulator(cfg)
 
-        # 设置相机视角
+        # setting camera angle
         agent_state = habitat_sim.AgentState()
         agent = sim.initialize_agent(sim_settings["default_agent"], agent_state)
 
-        sim.pathfinder.load_nav_mesh(navmesh_file)
-        # 获取导航网格的边界
-        nav_bounds_min, nav_bounds_max = sim.pathfinder.get_bounds()
-
-        map_height = 320
-        map_width = int(
-            map_height * ((nav_bounds_max[0] - nav_bounds_min[0]) / (nav_bounds_max[2] - nav_bounds_min[2])))
-        map_size = (map_width, map_height)
-
-        blank_map = np.zeros((map_size[1], map_size[0], 3), dtype=np.uint8)
-
-        # 获取路径
+        # getpath
         path = [step["position"] for step in pred_episode_steps if not step["stop"]]
-
-        min_height = 0
-        max_height = 10
-        height_samples = 10  # Number of height samples to take within the range
-
-        for i in range(0, map_size[0], 1):
-            for j in range(0, map_size[1], 1):
-                world_coord_base = np.array(
-                    [nav_bounds_min[0] + (i / map_size[0]) * (nav_bounds_max[0] - nav_bounds_min[0]),
-                     0,
-                     nav_bounds_min[2] + (j / map_size[1]) * (nav_bounds_max[2] - nav_bounds_min[2])])
-                x, y = world_to_map_coordinates(world_coord_base, map_size, nav_bounds_min, nav_bounds_max)
-
-                navigable = False
-                for h in np.linspace(min_height, max_height, height_samples):
-                    world_coord = world_coord_base + np.array([0, h, 0])
-                    if sim.pathfinder.is_navigable(world_coord):
-                        navigable = True
-                        break
-
-                if navigable:
-                    blank_map[y, x] = [0, 0, 0]
-                else:
-                    blank_map[y, x] = 255
-
-        for step in path:
-            x, y = world_to_map_coordinates(step, map_size, nav_bounds_min, nav_bounds_max)
-            cv2.circle(blank_map, (x, y), 2, (0, 0, 255), -1)
 
         if not path:
             continue
@@ -137,13 +91,22 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
 
         agent_state = habitat_sim.AgentState()
         agent.set_state(agent_state, reset_sensors=True)
-        # 沿路径移动相机并捕捉图像
-        for i, point in enumerate(interpolated_path[:-1]):
-            next_point = interpolated_path[i + 1]
+        # Move the camera along the path and capture the image
+        rotations = []
+        skipped_indices = []
+        for i, point in enumerate(path[:-1]):
+            point = np.array(point)
+            next_point = np.array(path[i + 1])
             direction_vector = next_point - point
-            direction_vector /= np.linalg.norm(direction_vector)
+            direction_norm = np.linalg.norm(direction_vector)
 
-            # 计算相机朝向（四元数）
+            # If the norm of the direction vector is too small, skip this point
+            if direction_norm < 1e-6:
+                skipped_indices.append(i)
+                continue
+
+            direction_vector /= direction_norm
+            # Calculate camera orientation (quaternion)
             up_vector = np.array([0, 1, 0])
             right_vector = np.cross(direction_vector, up_vector)
             right_vector /= np.linalg.norm(right_vector)
@@ -152,23 +115,33 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
             rotation_matrix = np.stack([right_vector, up_vector, -direction_vector], axis=1)
             rotation = Rotation.from_matrix(rotation_matrix)
             quaternion = rotation.as_quat()
+            rotations.append(quaternion)
 
+        # Add the last point's rotation
+        rotations.append(rotations[-1])
+        for index in reversed(skipped_indices):
+            del path[index]
+        interpolator = scipy.interpolate.interp1d(np.arange(len(path)), path, axis=0)
+        interpolated_path = interpolator(np.linspace(0, len(path) - 1, num_interpolated_points))
+
+        # Interpolate rotations
+        slerp = Slerp(np.linspace(0, len(path) - 1, len(path)), Rotation.from_quat(rotations))
+        interpolated_rotations = slerp(np.linspace(0, len(path) - 1, num_interpolated_points)).as_quat()
+
+        for i, point in enumerate(interpolated_path[:-1]):
             agent_state = habitat_sim.AgentState()
             agent_state.position = point
-            agent_state.rotation = quat_from_coeffs(quaternion)
+            agent_state.rotation = quat_from_coeffs(interpolated_rotations[i])
             agent.set_state(agent_state, reset_sensors=True)
 
-            x, y = world_to_map_coordinates(point, map_size, nav_bounds_min, nav_bounds_max)
-
-            cv2.circle(blank_map, (x, y), 1, (0, 255, 0), -1)
-
-            # 捕捉并显示图像
+            # Get sensor observations
             observations = sim.get_sensor_observations()
+
+            # Capture and display the image
             rgb_observation = observations["color_sensor"]
+
             cv2.imshow("RGB", rgb_observation)
-            # cv2.imshow("2D Map", blank_map)
-            resized_map = cv2.resize(blank_map, (map_size[0] * 2, map_size[1] * 2), interpolation=cv2.INTER_AREA)
-            cv2.imshow("2D Map", resized_map)
+
             cv2.waitKey(75)
 
 
