@@ -8,7 +8,6 @@ from habitat_sim.utils.common import quat_from_coeffs
 import cv2
 from scipy.spatial.transform import Rotation, Slerp
 import scipy.interpolate
-import open3d as o3d
 
 
 def catmull_rom_spline(points, num_interpolated_points):
