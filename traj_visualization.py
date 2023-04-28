@@ -49,9 +49,9 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
             "scene": scene_file,
             "default_agent": 0,
             "sensor_height": 0.7,
-            "sensor_width": 320,
-            "width": 320,
-            "height": 240,
+            "sensor_width": 1024,
+            "width": 2048,
+            "height": 1024,
         }
         backend_cfg = habitat_sim.SimulatorConfiguration()
         backend_cfg.scene_id = sim_settings["scene"]
@@ -70,12 +70,34 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         color_sensor_spec.channels_first = True
         color_sensor_spec.encoding = "png"
 
+        # 添加了topdown的传感器
+        topdown_height = 15
+        topdown_sensor_spec = habitat_sim.CameraSensorSpec()
+        topdown_sensor_spec.uuid = "topdown_sensor"
+        topdown_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
+        topdown_sensor_spec.resolution = [sim_settings["height"], sim_settings["width"]]
+        topdown_sensor_spec.position = [0, topdown_height, 0]
+        topdown_sensor_spec.orientation = [-np.pi / 2, 0, 0]
+        topdown_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
+
         agent_cfg = habitat_sim.agent.AgentConfiguration()
-        agent_cfg.sensor_specifications = [sensor_cfg]
+        agent_cfg.sensor_specifications = [sensor_cfg, topdown_sensor_spec]
 
         cfg = habitat_sim.Configuration(backend_cfg, [agent_cfg])
         sim = habitat_sim.Simulator(cfg)
 
+        nav_bounds_min, nav_bounds_max = sim.pathfinder.get_bounds()
+        scene_center_x = (nav_bounds_max[0] + nav_bounds_min[0]) / 2
+        scene_center_z = (nav_bounds_max[2] + nav_bounds_min[2]) / 2
+        topdown_sensor_spec.position = [scene_center_x, topdown_height, scene_center_z]
+
+        observations = sim.get_sensor_observations()
+        topdown_observation = observations["topdown_sensor"]
+        cv2.namedWindow("Top Down View", cv2.WINDOW_NORMAL)
+        cv2.imshow("Top Down View", topdown_observation)
+        cv2.resizeWindow("Top Down View", 2048, 1024)
+
+        # 3D Path
         # setting camera angle
         agent_state = habitat_sim.AgentState()
         agent = sim.initialize_agent(sim_settings["default_agent"], agent_state)
