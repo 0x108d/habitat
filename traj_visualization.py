@@ -4,7 +4,7 @@ from scipy.interpolate import CubicSpline
 import numpy as np
 import os
 import habitat_sim
-from habitat_sim.utils.common import quat_from_coeffs
+from habitat_sim.utils.common import quat_from_coeffs, quat_from_two_vectors
 import cv2
 from scipy.spatial.transform import Rotation, Slerp
 import scipy.interpolate
@@ -81,11 +81,13 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
 
         # 添加了topdown的传感器
         topdown_height = 30
+        topdown_camera_x = 15
+        topdown_camera_z = 0
         topdown_sensor_spec = habitat_sim.CameraSensorSpec()
         topdown_sensor_spec.uuid = "topdown_sensor"
         topdown_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
-        topdown_sensor_spec.resolution = [sim_settings["height"], sim_settings["width"]]
-        topdown_sensor_spec.position = [0, topdown_height, 0]
+        topdown_sensor_spec.resolution = [1024, 2048]
+        topdown_sensor_spec.position = [topdown_camera_x, topdown_height, topdown_camera_z]
         topdown_sensor_spec.orientation = [-np.pi / 2, 0, 0]
         topdown_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
 
@@ -101,6 +103,12 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         map_width = int(
             map_height * ((nav_bounds_max[0] - nav_bounds_min[0]) / (nav_bounds_max[2] - nav_bounds_min[2])))
         map_size = (map_width, map_height)
+
+        observations = sim.get_sensor_observations()
+        topdown_observation = observations["topdown_sensor"]
+        cv2.namedWindow("Top Down View", cv2.WINDOW_NORMAL)
+        cv2.imshow("Top Down View", topdown_observation)
+        # cv2.resizeWindow("Top Down View", map_size[0], map_size[1])
 
         # 3D Path
         # setting camera angle
@@ -163,10 +171,10 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
             # Get sensor observations
             observations = sim.get_sensor_observations()
 
-            topdown_observation = observations["topdown_sensor"]
-            cv2.namedWindow("Top Down View", cv2.WINDOW_NORMAL)
-            cv2.imshow("Top Down View", topdown_observation)
-            cv2.resizeWindow("Top Down View", map_size[0], map_size[1])
+            # topdown_observation = observations["topdown_sensor"]
+            # cv2.namedWindow("Top Down View", cv2.WINDOW_NORMAL)
+            # cv2.imshow("Top Down View", topdown_observation)
+            # cv2.resizeWindow("Top Down View", map_size[0], map_size[1])
 
             # Capture and display the image
             rgb_observation = observations["color_sensor"]
