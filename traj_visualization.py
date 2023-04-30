@@ -4,7 +4,7 @@ from scipy.interpolate import CubicSpline
 import numpy as np
 import os
 import habitat_sim
-from habitat_sim.utils.common import quat_from_coeffs, quat_from_two_vectors
+from habitat_sim.utils.common import quat_from_coeffs, quat_from_two_vectors, quat_rotate_vector
 import cv2
 from scipy.spatial.transform import Rotation, Slerp
 import scipy.interpolate
@@ -93,17 +93,17 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         map_size = (map_width, map_height)
 
         # 添加了topdown的传感器
-        topdown_height = 30
+        topdown_height = sim_settings["sensor_height"]
         topdown_camera_x = 15
-        topdown_camera_z = 0
+        topdown_camera_z = 30
         topdown_sensor_spec = habitat_sim.CameraSensorSpec()
         topdown_sensor_spec.uuid = "topdown_sensor"
         topdown_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
         topdown_sensor_spec.resolution = [map_height, map_width]
         topdown_sensor_spec.position = [topdown_camera_x, topdown_height, topdown_camera_z]
-        topdown_sensor_spec.orientation = [-np.pi / 2, 0, 0]
+        # topdown_sensor_spec.hfov = 2 * np.pi  # 全景视角
+        topdown_sensor_spec.orientation = [0, 0, 0]
         topdown_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
-
         agent_cfg.sensor_specifications = [sensor_cfg, topdown_sensor_spec]
 
         sim.close()
