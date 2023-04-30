@@ -79,20 +79,8 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         color_sensor_spec.channels_first = True
         color_sensor_spec.encoding = "png"
 
-        # 添加了topdown的传感器
-        topdown_height = 30
-        topdown_camera_x = 15
-        topdown_camera_z = 0
-        topdown_sensor_spec = habitat_sim.CameraSensorSpec()
-        topdown_sensor_spec.uuid = "topdown_sensor"
-        topdown_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
-        topdown_sensor_spec.resolution = [1024, 2048]
-        topdown_sensor_spec.position = [topdown_camera_x, topdown_height, topdown_camera_z]
-        topdown_sensor_spec.orientation = [-np.pi / 2, 0, 0]
-        topdown_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
-
         agent_cfg = habitat_sim.agent.AgentConfiguration()
-        agent_cfg.sensor_specifications = [sensor_cfg, topdown_sensor_spec]
+        agent_cfg.sensor_specifications = [sensor_cfg]
 
         cfg = habitat_sim.Configuration(backend_cfg, [agent_cfg])
         sim = habitat_sim.Simulator(cfg)
@@ -104,11 +92,28 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
             map_height * ((nav_bounds_max[0] - nav_bounds_min[0]) / (nav_bounds_max[2] - nav_bounds_min[2])))
         map_size = (map_width, map_height)
 
+        # 添加了topdown的传感器
+        topdown_height = 30
+        topdown_camera_x = 15
+        topdown_camera_z = 0
+        topdown_sensor_spec = habitat_sim.CameraSensorSpec()
+        topdown_sensor_spec.uuid = "topdown_sensor"
+        topdown_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
+        topdown_sensor_spec.resolution = [map_height, map_width]
+        topdown_sensor_spec.position = [topdown_camera_x, topdown_height, topdown_camera_z]
+        topdown_sensor_spec.orientation = [-np.pi / 2, 0, 0]
+        topdown_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
+
+        agent_cfg.sensor_specifications = [sensor_cfg, topdown_sensor_spec]
+
+        sim.close()
+        sim = habitat_sim.Simulator(cfg)
+
         observations = sim.get_sensor_observations()
         topdown_observation = observations["topdown_sensor"]
         cv2.namedWindow("Top Down View", cv2.WINDOW_NORMAL)
         cv2.imshow("Top Down View", topdown_observation)
-        # cv2.resizeWindow("Top Down View", map_size[0], map_size[1])
+        cv2.resizeWindow("Top Down View", map_size[0], map_size[1])
 
         # 3D Path
         # setting camera angle
