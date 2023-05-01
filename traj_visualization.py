@@ -94,14 +94,19 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
 
         # 添加了topdown的传感器
         topdown_height = sim_settings["sensor_height"]
-        topdown_camera_x = 15
-        topdown_camera_z = 30
+
+        # 计算场景的中心
+        center_x = 15
+        center_z = (nav_bounds_min[2] + nav_bounds_max[2]) / 2
+
+        # 向后移动摄像头
+        camera_offset = 30
+        center_z += camera_offset
         topdown_sensor_spec = habitat_sim.CameraSensorSpec()
         topdown_sensor_spec.uuid = "topdown_sensor"
         topdown_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
         topdown_sensor_spec.resolution = [map_height, map_width]
-        topdown_sensor_spec.position = [topdown_camera_x, topdown_height, topdown_camera_z]
-        # topdown_sensor_spec.hfov = 2 * np.pi  # 全景视角
+        topdown_sensor_spec.position = [center_x, topdown_height, center_z]
         topdown_sensor_spec.orientation = [0, 0, 0]
         topdown_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
         agent_cfg.sensor_specifications = [sensor_cfg, topdown_sensor_spec]
