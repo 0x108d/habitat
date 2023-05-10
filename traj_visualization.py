@@ -10,6 +10,28 @@ from scipy.spatial.transform import Rotation, Slerp
 import scipy.interpolate
 
 
+def get_floor_level(y, floor_height_ranges):
+    for i, (min_height, max_height) in enumerate(floor_height_ranges):
+        if min_height <= y < max_height:
+            return i
+    return None
+
+
+def parse_house_file(house_file):
+    with open(house_file, 'r') as f:
+        lines = f.readlines()
+
+    floor_height_ranges = []
+    for line in lines:
+        if line.startswith("L"):
+            tokens = line.strip().split()
+            floor_min_height = float(tokens[5])
+            floor_max_height = float(tokens[11])
+            floor_height_ranges.append((floor_min_height, floor_max_height))
+    print(f"floor height ranges: {floor_height_ranges}")
+    return floor_height_ranges
+
+
 def world_to_map_coordinates(world_coord, map_size, nav_bounds_min, nav_bounds_max):
     map_scale = (
         map_size[1] / (nav_bounds_max[2] - nav_bounds_min[2]), map_size[0] / (nav_bounds_max[0] - nav_bounds_min[0]))
@@ -48,10 +70,12 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
             print(f"Episode {pred_episode_id} not found in val_seen.json")
             continue
         scene_file = os.path.join(scene_directory, val_episode["scene_id"])
-        filename_without_ext = os.path.splitext(os.path.basename(val_episode["scene_id"]))[0]
+        filename_without_ext = os.path.splitext(val_episode["scene_id"])[0]
         navmesh_file = os.path.join(scene_directory, filename_without_ext + ".navmesh")
-
+        house_file = os.path.join(scene_directory, filename_without_ext + ".house")
+        floor_height_ranges = parse_house_file(house_file)
         print(f"Navmesh file path: {navmesh_file}")
+        print(f"House file path: {house_file}")
 
         # create simulator
         sim_settings = {
@@ -92,33 +116,28 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
             map_height * ((nav_bounds_max[0] - nav_bounds_min[0]) / (nav_bounds_max[2] - nav_bounds_min[2])))
         map_size = (map_width, map_height)
 
-        # 添加了topdown的传感器
-        topdown_height = sim_settings["sensor_height"]
-
         # 计算场景的中心
-        center_x = 15
-        center_z = (nav_bounds_min[2] + nav_bounds_max[2]) / 2
-
-        # 向后移动摄像头
-        camera_offset = 30
-        center_z += camera_offset
+        center_x = 0
+        center_y = 2.5
+        center_z = 0
         topdown_sensor_spec = habitat_sim.CameraSensorSpec()
         topdown_sensor_spec.uuid = "topdown_sensor"
         topdown_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
         topdown_sensor_spec.resolution = [map_height, map_width]
-        topdown_sensor_spec.position = [center_x, topdown_height, center_z]
-        topdown_sensor_spec.orientation = [0, 0, 0]
+        topdown_sensor_spec.position = [center_x, center_y, center_z]
+        topdown_sensor_spec.orientation = [-np.pi / 2, 0, 0]
+        topdown_sensor_spec.hfov = np.pi * 45
         topdown_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
         agent_cfg.sensor_specifications = [sensor_cfg, topdown_sensor_spec]
 
         sim.close()
         sim = habitat_sim.Simulator(cfg)
 
-        observations = sim.get_sensor_observations()
-        topdown_observation = observations["topdown_sensor"]
-        cv2.namedWindow("Top Down View", cv2.WINDOW_NORMAL)
-        cv2.imshow("Top Down View", topdown_observation)
-        cv2.resizeWindow("Top Down View", map_size[0], map_size[1])
+        # observations = sim.get_sensor_observations()
+        # topdown_observation = observations["topdown_sensor"]
+        # cv2.namedWindow("Top Down View", cv2.WINDOW_NORMAL)
+        # cv2.imshow("Top Down View", topdown_observation)
+        # cv2.resizeWindow("Top Down View", map_size[0], map_size[1])
 
         # 3D Path
         # setting camera angle
@@ -131,7 +150,6 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         if not path:
             continue
         num_interpolated_points = 600
-        interpolated_path = catmull_rom_spline(np.array(path), num_interpolated_points)
 
         agent_state = habitat_sim.AgentState()
         agent.set_state(agent_state, reset_sensors=True)
@@ -177,19 +195,19 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
             agent_state.position = point
             agent_state.rotation = quat_from_coeffs(interpolated_rotations[i])
             agent.set_state(agent_state, reset_sensors=True)
-
-            # Get sensor observations
             observations = sim.get_sensor_observations()
 
-            # topdown_observation = observations["topdown_sensor"]
-            # cv2.namedWindow("Top Down View", cv2.WINDOW_NORMAL)
-            # cv2.imshow("Top Down View", topdown_observation)
-            # cv2.resizeWindow("Top Down View", map_size[0], map_size[1])
+            topdown_sensor_rotation = [-np.pi / 2, 0, 0]
+            sim._sensors["topdown_sensor"].rotation = topdown_sensor_rotation
 
-            # Capture and display the image
+            # Get sensor observations
             rgb_observation = observations["color_sensor"]
-
             cv2.imshow("RGB", rgb_observation)
+
+            # Get sensor observations for the top-down camera
+            topdown_observation = observations["topdown_sensor"]
+            cv2.namedWindow("Top Down View", cv2.WINDOW_NORMAL)
+            cv2.imshow("Top Down View", topdown_observation)
 
             cv2.waitKey(75)
 
