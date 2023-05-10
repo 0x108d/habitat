@@ -106,7 +106,7 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         agent_cfg = habitat_sim.agent.AgentConfiguration()
         agent_cfg.sensor_specifications = [sensor_cfg]
 
-        cfg = habitat_sim.Configuration(backend_cfg, [agent_cfg])
+        cfg = habitat_sim.Configuration(backend_cfg, [agent_cfg, agent_cfg])
         sim = habitat_sim.Simulator(cfg)
 
         nav_bounds_min, nav_bounds_max = sim.pathfinder.get_bounds()
@@ -125,6 +125,7 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         topdown_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
         topdown_sensor_spec.resolution = [map_height, map_width]
         topdown_sensor_spec.position = [center_x, center_y, center_z]
+
         topdown_sensor_spec.orientation = [-np.pi / 2, 0, 0]
         topdown_sensor_spec.hfov = np.pi * 45
         topdown_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
@@ -132,6 +133,11 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
 
         sim.close()
         sim = habitat_sim.Simulator(cfg)
+        # Set up the color sensor for the first agent
+        sim.config.agents[0].sensor_specifications = [color_sensor_spec]
+
+        # Set up the topdown sensor for the second agent
+        sim.config.agents[1].sensor_specifications = [topdown_sensor_spec]
 
         # observations = sim.get_sensor_observations()
         # topdown_observation = observations["topdown_sensor"]
@@ -190,22 +196,36 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         slerp = Slerp(np.linspace(0, len(path) - 1, len(path)), Rotation.from_quat(rotations))
         interpolated_rotations = slerp(np.linspace(0, len(path) - 1, num_interpolated_points)).as_quat()
 
+        topdown_images = np.zeros((map_size[1], map_size[0], 3), dtype=np.uint8)
         for i, point in enumerate(interpolated_path[:-1]):
             agent_state = habitat_sim.AgentState()
             agent_state.position = point
             agent_state.rotation = quat_from_coeffs(interpolated_rotations[i])
-            agent.set_state(agent_state, reset_sensors=True)
-            observations = sim.get_sensor_observations()
+            sim.agents[0].set_state(agent_state, reset_sensors=True)
 
-            topdown_sensor_rotation = [-np.pi / 2, 0, 0]
-            sim._sensors["topdown_sensor"].rotation = topdown_sensor_rotation
+            # Update the second agent (topdown camera) state
+            agent_state = habitat_sim.AgentState()
+            agent_state.position = point
+            agent_state.rotation = habitat_sim.utils.common.quat_from_angle_axis(-np.pi / 2, np.array([1, 0, 0]))
+            sim.agents[1].set_state(agent_state, reset_sensors=True)
+
+            observations = sim.get_sensor_observations()
+            rgb_observation = observations["color_sensor"]
+            topdown_observation = observations["topdown_sensor"]
+            topdown_observation = cv2.cvtColor(topdown_observation, cv2.COLOR_RGB2BGR)
+
+            # topdown_sensor_rotation = [-np.pi / 2, 0, 0]
+            # sim._sensors["topdown_sensor"].rotation = topdown_sensor_rotation
 
             # Get sensor observations
-            rgb_observation = observations["color_sensor"]
+
             cv2.imshow("RGB", rgb_observation)
 
             # Get sensor observations for the top-down camera
-            topdown_observation = observations["topdown_sensor"]
+
+            alpha = 0.5  # 你可以根据需要调整这个值，它表示新画面的透明度，范围是 0 到 1
+            # combined_map = cv2.add(combined_map, topdown_observation)
+
             cv2.namedWindow("Top Down View", cv2.WINDOW_NORMAL)
             cv2.imshow("Top Down View", topdown_observation)
 
