@@ -22,7 +22,6 @@ def parse_house_file(file_path):
                 floor_heights[floor_number] = (min_height, max_height)
     return floor_heights
 
-
 def determine_floor(height, floor_heights):
     for floor, (min_h, max_h) in floor_heights.items():
         if min_h <= height < max_h:
@@ -62,11 +61,16 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         for episode in val_seen_data["episodes"]:
             if str(episode["episode_id"]) == pred_episode_id:
                 val_episode = episode
+
+                print(f"Episode ID: {pred_episode_id}")
+
                 break
 
         if val_episode is None:
             print(f"Episode {pred_episode_id} not found in val_seen.json")
             continue
+        reference_path = val_episode["reference_path"]
+        print(f"Reference Path: {reference_path}")
         scene_file = os.path.join(scene_directory, val_episode["scene_id"])
         filename_without_ext = os.path.splitext(val_episode["scene_id"])[0]
         navmesh_file = os.path.join(scene_directory, filename_without_ext + ".navmesh")
@@ -84,8 +88,8 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
             "default_agent": 0,
             "sensor_height": 0.7,
             "sensor_width": 1024,
-            "width": 2048,
-            "height": 1024,
+            "width": 1280,
+            "height": 640,
         }
         backend_cfg = habitat_sim.SimulatorConfiguration()
         backend_cfg.scene_id = sim_settings["scene"]
@@ -99,7 +103,7 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
 
         color_sensor_spec = habitat_sim.CameraSensorSpec()
         color_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
-        color_sensor_spec.hfov = np.pi / 3
+        color_sensor_spec.hfov = np.pi / 3.5
         color_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
         color_sensor_spec.channels_first = True
         color_sensor_spec.encoding = "png"
@@ -154,10 +158,12 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
                     blank_map[y, x] = color
                 else:
                     blank_map[y, x] = 255
-
-        for step in path:
+        # for step in path:
+        for step in reference_path:
+            print('Step:', step)
+            x, _, z = step
             x, y = world_to_map_coordinates(step, map_size, nav_bounds_min, nav_bounds_max)
-            cv2.circle(blank_map, (x, y), 2, (0, 0, 255), -1)
+            cv2.circle(blank_map, (x, y), 5, (0, 0, 255), -1)
 
         # set up 3d top down view
         center_x = 0
@@ -166,11 +172,11 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
         topdown_sensor_spec = habitat_sim.CameraSensorSpec()
         topdown_sensor_spec.uuid = "topdown_sensor"
         topdown_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
-        topdown_sensor_spec.resolution = [map_height, map_width]
+        topdown_sensor_spec.resolution = [1280, 1080]
         topdown_sensor_spec.position = [center_x, center_y, center_z]
 
-        topdown_sensor_spec.orientation = [-np.pi / 2, 0, 0]
-        topdown_sensor_spec.hfov = np.pi * 45
+        topdown_sensor_spec.orientation = [-np.pi / 2.5, 0, 0]
+        topdown_sensor_spec.vfov = np.pi * 45
         topdown_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
         agent_cfg.sensor_specifications = [sensor_cfg, topdown_sensor_spec]
 
@@ -276,7 +282,7 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
             rgb_observation = cv2.cvtColor(rgb_observation, cv2.COLOR_RGB2BGR)
 
             x, y = world_to_map_coordinates(agent_state.position, map_size, nav_bounds_min, nav_bounds_max)
-            cv2.circle(blank_map, (x, y), 1, (0, 255, 0), -1)
+            cv2.circle(blank_map, (x, y), 3, (0, 255, 0), -1)
 
             resized_map = cv2.resize(blank_map, (map_size[0] * 2, map_size[1] * 2), interpolation=cv2.INTER_AREA)
 
@@ -285,17 +291,19 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory):
             rgb_observation = cv2.resize(rgb_observation,
                                          (width, int(rgb_observation.shape[0] * width / rgb_observation.shape[1])))
             resized_map = cv2.resize(resized_map, (width, int(resized_map.shape[0] * width / resized_map.shape[1])))
-            topdown_observation = cv2.resize(topdown_observation, (
-                width, int(topdown_observation.shape[0] * width / topdown_observation.shape[1])))
+            # topdown_observation = cv2.resize(topdown_observation, (
+            #     width, int(topdown_observation.shape[0] * width / topdown_observation.shape[1])))
 
             # Then, vertically stack the images
-            combined_image = np.vstack((rgb_observation, topdown_observation, resized_map))
+            combined_image = np.vstack((rgb_observation, resized_map))
 
             # Now you can display the combined image
             cv2.imshow("Combined Image", combined_image)
+            cv2.imshow("Top-down view", topdown_observation)
 
             if cv2.waitKey(40) & 0xFF == ord('q'):
                 break
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
