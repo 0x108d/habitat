@@ -1,5 +1,7 @@
 import argparse
 import json
+import threading
+from PIL import Image, ImageTk
 from scipy.interpolate import CubicSpline
 import numpy as np
 import os
@@ -34,24 +36,26 @@ def determine_floor(height, floor_heights):
 
 
 def adjust_floor_heights(floor_heights):
-    # Find the minimum and maximum height of the building
-    min_height = min(min_h for min_h, _ in floor_heights.values())
-    max_height = max(max_h for _, max_h in floor_heights.values())
-
+    # Prepare a new dictionary to hold the adjusted heights
     adjusted_floor_heights = {}
+
+    # Determine the min and max height of the building
+    min_height = min(height[0] for height in floor_heights.values())
+    max_height = max(height[1] for height in floor_heights.values())
 
     # Calculate the total height of the building
     total_height = max_height - min_height
 
-    # Start from the top floor and go down
+    # Assign the top floor (highest index) its max height, and calculate downwards
     for floor in reversed(sorted(floor_heights.keys())):
         if floor == 0:
             # The bottom floor's min height is the minimum height of the building
-            adjusted_floor_heights[floor] = (min_height, max_height)
+            adjusted_floor_heights[floor] = (min_height, min_height + total_height * (
+                    (floor_heights[floor][1] - floor_heights[floor][0]) / total_height))
         else:
             # The top floor's max height is the current max height
             # The min height is calculated by subtracting the height of this floor from the current max height
-            floor_height = floor_heights[floor][1] - floor_heights[floor][0]
+            floor_height = total_height * ((floor_heights[floor][1] - floor_heights[floor][0]) / total_height)
             adjusted_floor_heights[floor] = (max_height - floor_height, max_height)
             max_height -= floor_height
 
@@ -103,7 +107,8 @@ def load_data(pred_json_file, val_seen_json_file, selected_episode_id):
     return pred_episode_steps, val_episode, val_seen_data
 
 
-def create_simulator(scene_file, sensor_height, sensor_width, width, height, center_coordinates):
+def create_simulator(scene_file, sensor_height, sensor_width, width, height, top_down_width, top_down_height, hfov,
+                     vfov, topdown_vfov):
     # create simulator
     sim_settings = {
         "scene": scene_file,
@@ -112,7 +117,12 @@ def create_simulator(scene_file, sensor_height, sensor_width, width, height, cen
         "sensor_width": sensor_width,
         "width": width,
         "height": height,
-        "center_coordinates": center_coordinates
+        "top-down width": top_down_width,
+        "top-down height": top_down_height,
+        "hfov": hfov,
+        "vfov": vfov,
+        "top_down_vfov": topdown_vfov
+
     }
     backend_cfg = habitat_sim.SimulatorConfiguration()
     backend_cfg.scene_id = sim_settings["scene"]
@@ -127,21 +137,21 @@ def create_simulator(scene_file, sensor_height, sensor_width, width, height, cen
 
     color_sensor_spec = habitat_sim.CameraSensorSpec()
     color_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
-    color_sensor_spec.hfov = np.pi / 3.5
-    color_sensor_spec.vfov = np.pi * 45
+    color_sensor_spec.hfov = np.pi / hfov  # 3.5
+    color_sensor_spec.vfov = np.pi * vfov
     color_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
     color_sensor_spec.channels_first = True
     color_sensor_spec.encoding = "png"
 
     # Set up 3D top-down view
-    center_x, center_y, center_z = sim_settings["center_coordinates"]
+    # center_x, center_y, center_z = sim_settings["center_coordinates"]
     topdown_sensor_spec = habitat_sim.CameraSensorSpec()
     topdown_sensor_spec.uuid = "topdown_sensor"
     topdown_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
-    topdown_sensor_spec.resolution = [1280, 1080]
-    topdown_sensor_spec.position = [center_x, center_y, center_z]
+    topdown_sensor_spec.resolution = [sim_settings["top-down height"], sim_settings["top-down width"]]
+    # topdown_sensor_spec.position = [center_x, center_y, center_z]
     topdown_sensor_spec.orientation = [-np.pi / 2.5, 0, 0]
-    topdown_sensor_spec.vfov = np.pi * 45
+    topdown_sensor_spec.vfov = np.pi * topdown_vfov
     topdown_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
 
     agent_cfg = habitat_sim.agent.AgentConfiguration()
@@ -221,36 +231,6 @@ def draw_path_on_map(blank_map, path, map_size, nav_bounds_min, nav_bounds_max):
         cv2.circle(blank_map, (x, y), 5, color, -1)
 
 
-def compute_path_rotations(path):
-    rotations = []
-    skipped_indices = []
-
-    for i, point in enumerate(path[:-1]):
-        point = np.array(point)
-        next_point = np.array(path[i + 1])
-        direction_vector = next_point - point
-        direction_norm = np.linalg.norm(direction_vector)
-
-        # If the norm of the direction vector is too small, skip this point
-        if direction_norm < 1e-6:
-            skipped_indices.append(i)
-            continue
-
-        direction_vector /= direction_norm
-        # Calculate camera orientation (quaternion)
-        up_vector = np.array([0, 1, 0])
-        right_vector = np.cross(direction_vector, up_vector)
-        right_vector /= np.linalg.norm(right_vector)
-        up_vector = np.cross(right_vector, direction_vector)
-
-        rotation_matrix = np.stack([right_vector, up_vector, -direction_vector], axis=1)
-        rotation = Rotation.from_matrix(rotation_matrix)
-        quaternion = rotation.as_quat()
-        rotations.append(quaternion)
-
-    return rotations, skipped_indices
-
-
 def calculate_rotations(path):
     rotations = []
     skipped_indices = []
@@ -300,130 +280,6 @@ def interpolate_rotations(rotations, num_interpolated_points):
     return interpolated_rotations
 
 
-def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, selected_episode_id):
-    # loading JSON file
-    pred_episode_steps, val_episode, val_seen_data = load_data(pred_json_file, val_seen_json_file, selected_episode_id)
-    if pred_episode_steps is None or val_episode is None or val_seen_data is None:
-        return
-    else:
-        reference_path = val_episode["reference_path"]
-        print(f"Reference Path: {reference_path}")
-        instruction_text = val_episode["instruction"]
-        print(f"Instruction Text: {instruction_text}")
-        filename_without_ext = os.path.splitext(val_episode["scene_id"])[0]
-        navmesh_file = os.path.join(scene_directory, filename_without_ext + ".navmesh")
-        house_file = os.path.join(scene_directory, filename_without_ext + ".house")
-        floor_heights = parse_house_file(house_file)
-        floor_heights = adjust_floor_heights(floor_heights)
-        print(f"Navmesh file path: {navmesh_file}")
-        print(f"House file path: {house_file}")
-
-        # getpath
-        path = [step["position"] for step in pred_episode_steps if not step["stop"]]
-        # set up 3d and top down view
-        scene_file = os.path.join(scene_directory, val_episode["scene_id"])
-        sensor_height = 0.7
-        sensor_width = 1024
-        width = 1280
-        height = 640
-        center_coordinates = [0, 2.5, 0]
-        sim = create_simulator(scene_file, sensor_height, sensor_width, width, height, center_coordinates)
-        # set up 2d map
-        map_height = 640  # specify desired map height
-        blank_map, map_size, nav_bounds_min, nav_bounds_max = create_navmesh_map(sim, navmesh_file, map_height,
-                                                                                 floor_heights)
-        # Draw the path on the map
-        draw_path_on_map(blank_map, reference_path, map_size, nav_bounds_min, nav_bounds_max)
-
-        # if not path:
-        #     continue
-        num_interpolated_points = 600
-        # Calculate rotations and skipped indices
-        rotations, skipped_indices = calculate_rotations(path)
-
-        # Remove skipped indices from the path
-        path = remove_skipped_indices(path, skipped_indices)
-
-        # Interpolate the path and rotations
-        interpolated_path = interpolate_path(path, num_interpolated_points)
-        interpolated_rotations = interpolate_rotations(rotations, num_interpolated_points)
-
-        rotation_increment = np.pi / 18  # Rotate by 10 degrees at a time
-        agent_state = habitat_sim.AgentState()
-        agent_state.position = interpolated_path[0]
-        agent_state.rotation = quat_from_coeffs(interpolated_rotations[0])
-
-        paused = False
-        i = 0
-        while i < len(interpolated_path) - 1:
-            # Check for keyboard input
-            key = cv2.waitKey(40) & 0xFF
-            if key == ord(' '):  # Space bar to pause
-                paused = not paused
-            elif key == ord('r'):
-                paused = False
-            elif paused:  # Only allow movement and rotation while paused
-                if key == ord('w'):
-                    i = min(i + 1, len(interpolated_path) - 1)
-                    agent_state.position = interpolated_path[i]
-                elif key == ord('s'):
-                    i = max(i - 1, 0)
-                    agent_state.position = interpolated_path[i]
-                elif key == ord('a'):
-                    y_rotation = habitat_sim.utils.common.quat_from_angle_axis(rotation_increment, np.array([0, 1, 0]))
-                    agent_state.rotation = y_rotation * agent_state.rotation
-                elif key == ord('d'):
-                    y_rotation = habitat_sim.utils.common.quat_from_angle_axis(-rotation_increment, np.array([0, 1, 0]))
-                    agent_state.rotation = y_rotation * agent_state.rotation
-            else:
-                i += 1
-                agent_state.position = interpolated_path[i]
-                agent_state.rotation = quat_from_coeffs(interpolated_rotations[i])
-
-            sim.agents[0].set_state(agent_state, reset_sensors=True)
-
-            # Update the second agent (top-down camera) state
-            agent_state_top_down = habitat_sim.AgentState()
-            agent_state_top_down.position = agent_state.position
-            agent_state_top_down.rotation = habitat_sim.utils.common.quat_from_angle_axis(-np.pi / 2,
-                                                                                          np.array([1, 0, 0]))
-            sim.agents[1].set_state(agent_state_top_down, reset_sensors=True)
-
-            # Capture and display the image
-            observations = sim.get_sensor_observations()
-            topdown_observation = observations["topdown_sensor"]
-            topdown_observation = cv2.cvtColor(topdown_observation, cv2.COLOR_RGB2BGR)
-            rgb_observation = observations["color_sensor"]
-            rgb_observation = cv2.cvtColor(rgb_observation, cv2.COLOR_RGB2BGR)
-
-            # Get the "cool" colormap
-            cmap = plt.get_cmap('cool')
-            color = cmap(0.0)[:3]
-            agent_color = tuple(int(val * 255) for val in color)
-            x, y = world_to_map_coordinates(agent_state.position, map_size, nav_bounds_min, nav_bounds_max)
-            cv2.circle(blank_map, (x, y), 3, agent_color, -1)
-
-            resized_map = cv2.resize(blank_map, (map_size[0] * 2, map_size[1] * 2), interpolation=cv2.INTER_AREA)
-
-            width = max(rgb_observation.shape[1], resized_map.shape[1], topdown_observation.shape[1])
-
-            rgb_observation = cv2.resize(rgb_observation,
-                                         (width, int(rgb_observation.shape[0] * width / rgb_observation.shape[1])))
-            resized_map = cv2.resize(resized_map, (width, int(resized_map.shape[0] * width / resized_map.shape[1])))
-            # topdown_observation = cv2.resize(topdown_observation, (
-            #     width, int(topdown_observation.shape[0] * width / topdown_observation.shape[1])))
-
-            # Then, vertically stack the images
-            combined_image = np.vstack((rgb_observation, resized_map))
-
-            # display the combined image
-            cv2.imshow("Combined Image", combined_image)
-            cv2.imshow("Top-down view", topdown_observation)
-
-            if cv2.waitKey(40) & 0xFF == ord('q'):
-                break
-
-
 class GUI(tk.Tk):
     def __init__(self):
         tk.Tk.__init__(self)
@@ -457,6 +313,9 @@ class GUI(tk.Tk):
         self.episode_range_label = tk.Label(self)
         self.episode_range_label.pack()
 
+        self.progressbar = ttk.Progressbar(self, mode='determinate')
+        self.progressbar.pack()
+
     def load_pred_json_file(self):
         self.pred_json_file = filedialog.askopenfilename()
         # Update episode id choices based on the selected pred_json_file
@@ -477,7 +336,172 @@ class GUI(tk.Tk):
         if selected_episode_id not in self.combo_episode_id['values']:
             messagebox.showerror("Invalid input", "The episode ID you entered does not exist.")
             return
-        visualize_trajectory(self.pred_json_file, self.val_seen_json_file, self.scene_directory, selected_episode_id)
+        visualize_trajectory(self.pred_json_file, self.val_seen_json_file, self.scene_directory, selected_episode_id,
+                             self.progressbar)
+
+
+def update_canvas_image(canvas, img):
+    # Convert image from BGR to RGB and create a PIL Image object
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(img)
+
+    # Create a PhotoImage object from the PIL Image
+    photo = ImageTk.PhotoImage(image=pil_img)
+
+    # Clear the canvas and display the new image
+    canvas.delete('all')
+    canvas.create_image(0, 0, image=photo, anchor='nw')
+
+    canvas.image = photo
+
+
+def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, selected_episode_id, progressbar):
+    # loading JSON file
+    pred_episode_steps, val_episode, val_seen_data = load_data(pred_json_file, val_seen_json_file, selected_episode_id)
+    if pred_episode_steps is None or val_episode is None or val_seen_data is None:
+        return
+    else:
+        progressbar["value"] = 10
+        progressbar.update()
+        reference_path = val_episode["reference_path"]
+        print(f"Reference Path: {reference_path}")
+        instruction_text = val_episode["instruction"]
+        print(f"Instruction Text: {instruction_text}")
+        filename_without_ext = os.path.splitext(val_episode["scene_id"])[0]
+        navmesh_file = os.path.join(scene_directory, filename_without_ext + ".navmesh")
+        house_file = os.path.join(scene_directory, filename_without_ext + ".house")
+        floor_heights = parse_house_file(house_file)
+        floor_heights = adjust_floor_heights(floor_heights)
+        print(f"Navmesh file path: {navmesh_file}")
+        print(f"House file path: {house_file}")
+
+        # getpath
+        path = [step["position"] for step in pred_episode_steps if not step["stop"]]
+        # set up 3d and top down view
+        scene_file = os.path.join(scene_directory, val_episode["scene_id"])
+        sensor_height = 0.7
+        sensor_width = 1280
+        width = 1280
+        height = 640
+        top_down_width = 1080
+        top_down_height = 1280
+        hfov = 3.5
+        vfov = 50
+        topdown_vfov = 45
+        # center_coordinates = [0, 2.5, 0]
+        progressbar["value"] = 20
+        progressbar.update()
+        sim = create_simulator(scene_file, sensor_height, sensor_width, width, height, top_down_width, top_down_height,
+                               hfov,
+                               vfov, topdown_vfov)
+        progressbar["value"] = 30
+        progressbar.update()
+        # set up 2d map
+        map_height = height  # specify desired map height
+        blank_map, map_size, nav_bounds_min, nav_bounds_max = create_navmesh_map(sim, navmesh_file, map_height,
+                                                                                 floor_heights)
+        progressbar["value"] = 40
+        progressbar.update()
+        # Draw the path on the map
+        draw_path_on_map(blank_map, reference_path, map_size, nav_bounds_min, nav_bounds_max)
+        progressbar["value"] = 50
+        progressbar.update()
+        # if not path:
+        #     continue
+        num_interpolated_points = 600
+        # Calculate rotations and skipped indices
+        rotations, skipped_indices = calculate_rotations(path)
+        progressbar["value"] = 60
+        progressbar.update()
+
+        # Remove skipped indices from the path
+        path = remove_skipped_indices(path, skipped_indices)
+        progressbar["value"] = 70
+        progressbar.update()
+
+        # Interpolate the path and rotations
+        interpolated_path = interpolate_path(path, num_interpolated_points)
+        progressbar["value"] = 80
+        progressbar.update()
+        interpolated_rotations = interpolate_rotations(rotations, num_interpolated_points)
+
+        progressbar["value"] = 90
+        progressbar.update()
+        rotation_increment = np.pi / 18  # Rotate by 10 degrees at a time
+        agent_state = habitat_sim.AgentState()
+        agent_state.position = interpolated_path[0]
+        agent_state.rotation = quat_from_coeffs(interpolated_rotations[0])
+        progressbar["value"] = 100
+        progressbar.update()
+        paused = False
+        i = 0
+        while i < len(interpolated_path) - 1:
+            # Check for keyboard input
+            key = cv2.waitKey(40) & 0xFF
+            if key == ord(' '):  # Space bar to pause
+                paused = not paused
+            elif key == ord('r'):
+                paused = False
+            elif paused:  # Only allow movement and rotation while paused
+                if key == ord('w'):
+                    i = min(i + 1, len(interpolated_path) - 1)
+                    agent_state.position = interpolated_path[i]
+                elif key == ord('s'):
+                    i = max(i - 1, 0)
+                    agent_state.position = interpolated_path[i]
+                elif key == ord('a'):
+                    y_rotation = habitat_sim.utils.common.quat_from_angle_axis(rotation_increment, np.array([0, 1, 0]))
+                    agent_state.rotation = y_rotation * agent_state.rotation
+                elif key == ord('d'):
+                    y_rotation = habitat_sim.utils.common.quat_from_angle_axis(-rotation_increment, np.array([0, 1, 0]))
+                    agent_state.rotation = y_rotation * agent_state.rotation
+
+            else:
+                i += 1
+                agent_state.position = interpolated_path[i]
+                agent_state.rotation = quat_from_coeffs(interpolated_rotations[i])
+
+            sim.agents[0].set_state(agent_state, reset_sensors=True)
+
+            # Update the second agent (top-down camera) state
+            agent_state_top_down = habitat_sim.AgentState()
+            agent_state_top_down.position = agent_state.position
+            agent_state_top_down.rotation = habitat_sim.utils.common.quat_from_angle_axis(-np.pi / 2,
+                                                                                          np.array([1, 0, 0]))
+            sim.agents[1].set_state(agent_state_top_down, reset_sensors=True)
+            progress_percentage = (i / len(interpolated_path)) * 100
+            progressbar['value'] = progress_percentage
+            # Capture and display the image
+            observations = sim.get_sensor_observations()
+            topdown_observation = observations["topdown_sensor"]
+            topdown_observation = cv2.cvtColor(topdown_observation, cv2.COLOR_RGB2BGR)
+            rgb_observation = observations["color_sensor"]
+            rgb_observation = cv2.cvtColor(rgb_observation, cv2.COLOR_RGB2BGR)
+
+            # Get the "cool" colormap
+            cmap = plt.get_cmap('cool')
+            color = cmap(0.0)[:3]
+            agent_color = tuple(int(val * 255) for val in color)
+            x, y = world_to_map_coordinates(agent_state.position, map_size, nav_bounds_min, nav_bounds_max)
+            cv2.circle(blank_map, (x, y), 3, agent_color, -1)
+
+            resized_map = cv2.resize(blank_map, (map_size[0], map_size[1]), interpolation=cv2.INTER_AREA)
+
+            # canvas_rgb_observation.after(0, update_canvas_image, canvas_rgb_observation, rgb_observation)
+            # canvas_resized_map.after(0, update_canvas_image, canvas_resized_map, resized_map)
+            # canvas_topdown_observation.after(0, update_canvas_image, canvas_topdown_observation, topdown_observation)
+
+            # Display the RGB observation
+            cv2.imshow("RGB Observation", rgb_observation)
+
+            # Display the map
+            cv2.imshow("Map", resized_map)
+
+            # Display the top-down view
+            cv2.imshow("Top-down View", topdown_observation)
+
+            if cv2.waitKey(40) & 0xFF == ord('q'):
+                break
 
 
 gui = GUI()
