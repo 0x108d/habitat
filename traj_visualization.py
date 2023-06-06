@@ -2,6 +2,7 @@ import argparse
 import json
 import threading
 from PIL import Image, ImageTk
+from tkinter import Label, StringVar, W, filedialog, messagebox, Tk, Frame, Button, BOTH, OptionMenu, StringVar, Listbox
 from scipy.interpolate import CubicSpline
 import numpy as np
 import os
@@ -288,24 +289,26 @@ class GUI(tk.Tk):
         self.scene_directory = None
         self.episode_id = tk.StringVar()
 
-        self.button_pred_json_file = tk.Button(self, text="Select pred_json_file", command=self.load_pred_json_file)
+        self.button_pred_json_file = tk.Button(self, text="Select Pred_val_seen", command=self.load_pred_json_file)
         self.button_pred_json_file.pack()
 
-        self.button_val_seen_json_file = tk.Button(self, text="Select val_seen_json_file",
+        self.button_val_seen_json_file = tk.Button(self, text="Select val_seen",
                                                    command=self.load_val_seen_json_file)
         self.button_val_seen_json_file.pack()
 
         self.button_scene_directory = tk.Button(self, text="Select Scene Directory", command=self.load_scene_directory)
         self.button_scene_directory.pack()
 
-        self.combo_episode_id = ttk.Combobox(self, textvariable=self.episode_id)
-        self.combo_episode_id.pack()
-
         self.episode_id_label = tk.Label(self, text="Enter Episode ID:")
         self.episode_id_label.pack()
 
-        self.episode_id_entry = tk.Entry(self, textvariable=self.episode_id)
-        self.episode_id_entry.pack()
+        self.combo_episode_id = ttk.Combobox(self, textvariable=self.episode_id)
+        self.combo_episode_id.pack()
+
+        # self.episode_id_entry = tk.Entry(self, textvariable=self.episode_id)
+        # self.episode_id_entry.pack()
+        self.instruction_text_widget = tk.Text(self, wrap=tk.WORD, font=("Helvetica", 16, "bold"))
+        self.instruction_text_widget.pack(fill=tk.Y)
 
         self.button_start = tk.Button(self, text="Start", command=self.start)
         self.button_start.pack()
@@ -321,7 +324,7 @@ class GUI(tk.Tk):
         # Update episode id choices based on the selected pred_json_file
         with open(self.pred_json_file, 'r') as f:
             pred_data = json.load(f)
-        episode_ids = list(map(int, pred_data.keys()))  # Convert keys to integers
+        episode_ids = sorted(list(map(int, pred_data.keys())))  # Convert keys to integers
         self.combo_episode_id['values'] = episode_ids
         self.episode_range_label['text'] = f"Episode range: {min(episode_ids)} - {max(episode_ids)}"
 
@@ -336,23 +339,24 @@ class GUI(tk.Tk):
         if selected_episode_id not in self.combo_episode_id['values']:
             messagebox.showerror("Invalid input", "The episode ID you entered does not exist.")
             return
+
+        # Get the episode from the val_seen data
+        with open(self.val_seen_json_file, 'r') as f:
+            val_seen_data = json.load(f)
+        # Find the corresponding episode in the val_seen data
+        episode = next((ep for ep in val_seen_data['episodes'] if str(ep['episode_id']) == selected_episode_id),
+                       None)
+        if episode is None:  # No matching episode was found
+            print(f"Episode {selected_episode_id} not found in val_seen.json")
+            return
+
+        # Display the reference path and instruction
+        self.instruction_text_widget.config(state=tk.NORMAL)
+        self.instruction_text_widget.delete('1.0', tk.END)  # clear previous text
+        self.instruction_text_widget.insert(tk.END, "Instruction:\n" + str(episode['instruction']['instruction_text']))
+        self.instruction_text_widget.config(state=tk.DISABLED)
         visualize_trajectory(self.pred_json_file, self.val_seen_json_file, self.scene_directory, selected_episode_id,
                              self.progressbar)
-
-
-def update_canvas_image(canvas, img):
-    # Convert image from BGR to RGB and create a PIL Image object
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    pil_img = Image.fromarray(img)
-
-    # Create a PhotoImage object from the PIL Image
-    photo = ImageTk.PhotoImage(image=pil_img)
-
-    # Clear the canvas and display the new image
-    canvas.delete('all')
-    canvas.create_image(0, 0, image=photo, anchor='nw')
-
-    canvas.image = photo
 
 
 def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, selected_episode_id, progressbar):
@@ -486,10 +490,6 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, se
             cv2.circle(blank_map, (x, y), 3, agent_color, -1)
 
             resized_map = cv2.resize(blank_map, (map_size[0], map_size[1]), interpolation=cv2.INTER_AREA)
-
-            # canvas_rgb_observation.after(0, update_canvas_image, canvas_rgb_observation, rgb_observation)
-            # canvas_resized_map.after(0, update_canvas_image, canvas_resized_map, resized_map)
-            # canvas_topdown_observation.after(0, update_canvas_image, canvas_topdown_observation, topdown_observation)
 
             # Display the RGB observation
             cv2.imshow("RGB Observation", rgb_observation)
