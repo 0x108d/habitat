@@ -8,7 +8,7 @@ from habitat_sim.utils.common import quat_from_coeffs
 from scipy.spatial.transform import Rotation, Slerp
 import scipy.interpolate
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, ttk, messagebox
 import cv2
 import matplotlib.pyplot as plt
 
@@ -31,6 +31,31 @@ def determine_floor(height, floor_heights):
         if min_h <= height < max_h:
             return floor
     return None
+
+
+def adjust_floor_heights(floor_heights):
+    # Find the minimum and maximum height of the building
+    min_height = min(min_h for min_h, _ in floor_heights.values())
+    max_height = max(max_h for _, max_h in floor_heights.values())
+
+    adjusted_floor_heights = {}
+
+    # Calculate the total height of the building
+    total_height = max_height - min_height
+
+    # Start from the top floor and go down
+    for floor in reversed(sorted(floor_heights.keys())):
+        if floor == 0:
+            # The bottom floor's min height is the minimum height of the building
+            adjusted_floor_heights[floor] = (min_height, max_height)
+        else:
+            # The top floor's max height is the current max height
+            # The min height is calculated by subtracting the height of this floor from the current max height
+            floor_height = floor_heights[floor][1] - floor_heights[floor][0]
+            adjusted_floor_heights[floor] = (max_height - floor_height, max_height)
+            max_height -= floor_height
+
+    return adjusted_floor_heights
 
 
 def catmull_rom_spline(points, num_interpolated_points):
@@ -172,10 +197,8 @@ def create_navmesh_map(sim, navmesh_file, map_height, floor_heights, height_samp
 
             if navigable:
                 # Map the floor value to a value between 0 and 1
-                normalized_floor = floor / len(floor_heights)  # Assuming floor is an integer index
+                color = cmap(floor % cmap.N)[:3]  # Assuming floor is an integer index
                 # Get the RGB color from the colormap
-                color = cmap(normalized_floor)[:3]
-                # Convert to values between 0 and 255 for use with cv2
                 color = tuple(int(val * 255) for val in color)
                 blank_map[y, x] = color
             else:
@@ -199,7 +222,6 @@ def draw_path_on_map(blank_map, path, map_size, nav_bounds_min, nav_bounds_max):
 
 
 def compute_path_rotations(path):
-    num_interpolated_points = 600
     rotations = []
     skipped_indices = []
 
@@ -292,6 +314,7 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, se
         navmesh_file = os.path.join(scene_directory, filename_without_ext + ".navmesh")
         house_file = os.path.join(scene_directory, filename_without_ext + ".house")
         floor_heights = parse_house_file(house_file)
+        floor_heights = adjust_floor_heights(floor_heights)
         print(f"Navmesh file path: {navmesh_file}")
         print(f"House file path: {house_file}")
 
@@ -422,15 +445,26 @@ class GUI(tk.Tk):
         self.combo_episode_id = ttk.Combobox(self, textvariable=self.episode_id)
         self.combo_episode_id.pack()
 
+        self.episode_id_label = tk.Label(self, text="Enter Episode ID:")
+        self.episode_id_label.pack()
+
+        self.episode_id_entry = tk.Entry(self, textvariable=self.episode_id)
+        self.episode_id_entry.pack()
+
         self.button_start = tk.Button(self, text="Start", command=self.start)
         self.button_start.pack()
+
+        self.episode_range_label = tk.Label(self)
+        self.episode_range_label.pack()
 
     def load_pred_json_file(self):
         self.pred_json_file = filedialog.askopenfilename()
         # Update episode id choices based on the selected pred_json_file
         with open(self.pred_json_file, 'r') as f:
             pred_data = json.load(f)
-        self.combo_episode_id['values'] = list(pred_data.keys())
+        episode_ids = list(map(int, pred_data.keys()))  # Convert keys to integers
+        self.combo_episode_id['values'] = episode_ids
+        self.episode_range_label['text'] = f"Episode range: {min(episode_ids)} - {max(episode_ids)}"
 
     def load_val_seen_json_file(self):
         self.val_seen_json_file = filedialog.askopenfilename()
@@ -440,6 +474,9 @@ class GUI(tk.Tk):
 
     def start(self):
         selected_episode_id = self.episode_id.get()
+        if selected_episode_id not in self.combo_episode_id['values']:
+            messagebox.showerror("Invalid input", "The episode ID you entered does not exist.")
+            return
         visualize_trajectory(self.pred_json_file, self.val_seen_json_file, self.scene_directory, selected_episode_id)
 
 
