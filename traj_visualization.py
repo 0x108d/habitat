@@ -304,17 +304,36 @@ class GUI(tk.Tk):
 
         self.combo_episode_id = ttk.Combobox(self, textvariable=self.episode_id)
         self.combo_episode_id.pack()
+        self.episode_range_label = tk.Label(self)
+        self.episode_range_label.pack()
+        # Create string variables to hold the user's inputs
+        self.hfov = tk.StringVar()
+        self.vfov = tk.StringVar()
+        self.topdown_vfov = tk.StringVar()
 
-        # self.episode_id_entry = tk.Entry(self, textvariable=self.episode_id)
-        # self.episode_id_entry.pack()
+        # Add entries for hfov, vfov and topdown_vfov
+        self.hfov_label = tk.Label(self, text="Enter hfov:")
+        self.hfov_label.pack()
+        self.hfov_entry = tk.Entry(self, textvariable=self.hfov)
+        self.hfov_entry.pack()
+
+        self.vfov_label = tk.Label(self, text="Enter vfov:")
+        self.vfov_label.pack()
+        self.vfov_entry = tk.Entry(self, textvariable=self.vfov)
+        self.vfov_entry.pack()
+
+        self.topdown_vfov_label = tk.Label(self, text="Enter topdown_vfov:")
+        self.topdown_vfov_label.pack()
+        self.topdown_vfov_entry = tk.Entry(self, textvariable=self.topdown_vfov)
+        self.topdown_vfov_entry.pack()
+
+        self.episode_id_label = tk.Label(self, text="Instruction:")
+        self.episode_id_label.pack()
         self.instruction_text_widget = tk.Text(self, wrap=tk.WORD, font=("Helvetica", 16, "bold"))
         self.instruction_text_widget.pack(fill=tk.Y)
 
         self.button_start = tk.Button(self, text="Start", command=self.start)
         self.button_start.pack()
-
-        self.episode_range_label = tk.Label(self)
-        self.episode_range_label.pack()
 
         self.progressbar = ttk.Progressbar(self, mode='determinate')
         self.progressbar.pack()
@@ -355,11 +374,15 @@ class GUI(tk.Tk):
         self.instruction_text_widget.delete('1.0', tk.END)  # clear previous text
         self.instruction_text_widget.insert(tk.END, "Instruction:\n" + str(episode['instruction']['instruction_text']))
         self.instruction_text_widget.config(state=tk.DISABLED)
+        hfov = float(self.hfov.get())
+        vfov = int(self.vfov.get())
+        topdown_vfov = int(self.topdown_vfov.get())
         visualize_trajectory(self.pred_json_file, self.val_seen_json_file, self.scene_directory, selected_episode_id,
-                             self.progressbar)
+                             self.progressbar, hfov, vfov, topdown_vfov)
 
 
-def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, selected_episode_id, progressbar):
+def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, selected_episode_id, progressbar, hfov,
+                         vfov, topdown_vfov):
     # loading JSON file
     pred_episode_steps, val_episode, val_seen_data = load_data(pred_json_file, val_seen_json_file, selected_episode_id)
     if pred_episode_steps is None or val_episode is None or val_seen_data is None:
@@ -389,9 +412,9 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, se
         height = 640
         top_down_width = 1080
         top_down_height = 1280
-        hfov = 3.5
-        vfov = 50
-        topdown_vfov = 45
+        # hfov = 3.5
+        # vfov = 50
+        # topdown_vfov = 45
         # center_coordinates = [0, 2.5, 0]
         progressbar["value"] = 20
         progressbar.update()
