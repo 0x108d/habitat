@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import filedialog, ttk
 import json
-
+import cv2
 from traj_visualization import visualize_trajectory
 
 

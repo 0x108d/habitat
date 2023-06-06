@@ -5,9 +5,12 @@ import numpy as np
 import os
 import habitat_sim
 from habitat_sim.utils.common import quat_from_coeffs
-import cv2
 from scipy.spatial.transform import Rotation, Slerp
 import scipy.interpolate
+import tkinter as tk
+from tkinter import filedialog, ttk
+import cv2
+import matplotlib.pyplot as plt
 
 
 def parse_house_file(file_path):
@@ -145,11 +148,8 @@ def create_navmesh_map(sim, navmesh_file, map_height, floor_heights, height_samp
 
     blank_map = np.zeros((map_size[1], map_size[0], 3), dtype=np.uint8)
 
-    floor_colors = {
-        0: (255, 0, 0),  # Red
-        1: (0, 255, 0),  # Green
-        2: (0, 0, 255)  # Blue
-    }
+    # Get the "viridis" colormap
+    cmap = plt.get_cmap('viridis')
 
     for i in range(0, map_size[0], 1):
         for j in range(0, map_size[1], 1):
@@ -171,7 +171,12 @@ def create_navmesh_map(sim, navmesh_file, map_height, floor_heights, height_samp
                         break
 
             if navigable:
-                color = floor_colors.get(floor, (0, 0, 0))
+                # Map the floor value to a value between 0 and 1
+                normalized_floor = floor / len(floor_heights)  # Assuming floor is an integer index
+                # Get the RGB color from the colormap
+                color = cmap(normalized_floor)[:3]
+                # Convert to values between 0 and 255 for use with cv2
+                color = tuple(int(val * 255) for val in color)
                 blank_map[y, x] = color
             else:
                 blank_map[y, x] = 255
@@ -180,11 +185,17 @@ def create_navmesh_map(sim, navmesh_file, map_height, floor_heights, height_samp
 
 
 def draw_path_on_map(blank_map, path, map_size, nav_bounds_min, nav_bounds_max):
-    for step in path:
+    # Get the "hot" colormap
+    cmap = plt.get_cmap('hot')
+
+    for i, step in enumerate(path):
         print('Step:', step)
         x, _, z = step
         x, y = world_to_map_coordinates(step, map_size, nav_bounds_min, nav_bounds_max)
-        cv2.circle(blank_map, (x, y), 5, (0, 0, 255), -1)
+        normalized_step_index = i / len(path)
+        color = cmap(normalized_step_index)[:3]
+        color = tuple(int(val * 255) for val in color)
+        cv2.circle(blank_map, (x, y), 5, color, -1)
 
 
 def compute_path_rotations(path):
@@ -295,7 +306,7 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, se
         center_coordinates = [0, 2.5, 0]
         sim = create_simulator(scene_file, sensor_height, sensor_width, width, height, center_coordinates)
         # set up 2d map
-        map_height = 640  # specify your desired map height
+        map_height = 640  # specify desired map height
         blank_map, map_size, nav_bounds_min, nav_bounds_max = create_navmesh_map(sim, navmesh_file, map_height,
                                                                                  floor_heights)
         # Draw the path on the map
@@ -362,8 +373,12 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, se
             rgb_observation = observations["color_sensor"]
             rgb_observation = cv2.cvtColor(rgb_observation, cv2.COLOR_RGB2BGR)
 
+            # Get the "cool" colormap
+            cmap = plt.get_cmap('cool')
+            color = cmap(0.0)[:3]
+            agent_color = tuple(int(val * 255) for val in color)
             x, y = world_to_map_coordinates(agent_state.position, map_size, nav_bounds_min, nav_bounds_max)
-            cv2.circle(blank_map, (x, y), 3, (0, 255, 0), -1)
+            cv2.circle(blank_map, (x, y), 3, agent_color, -1)
 
             resized_map = cv2.resize(blank_map, (map_size[0] * 2, map_size[1] * 2), interpolation=cv2.INTER_AREA)
 
@@ -378,17 +393,55 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, se
             # Then, vertically stack the images
             combined_image = np.vstack((rgb_observation, resized_map))
 
-            # Now you can display the combined image
+            # display the combined image
             cv2.imshow("Combined Image", combined_image)
             cv2.imshow("Top-down view", topdown_observation)
 
             if cv2.waitKey(40) & 0xFF == ord('q'):
                 break
 
-# if __name__ == "__main__":
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument('--pred-json', type=str, required=True, help='Path to the pred_val_seen JSON file')
-#     parser.add_argument('--val-json', type=str, required=True, help='Path to the JSON file')
-#     parser.add_argument('--scene-dir', type=str, required=True, help='Path to the directory containing glb files')
-#     args = parser.parse_args()
-#     visualize_trajectory(args.pred_json, args.val_json, args.scene_dir)
+
+class GUI(tk.Tk):
+    def __init__(self):
+        tk.Tk.__init__(self)
+        self.pred_json_file = None
+        self.val_seen_json_file = None
+        self.scene_directory = None
+        self.episode_id = tk.StringVar()
+
+        self.button_pred_json_file = tk.Button(self, text="Select pred_json_file", command=self.load_pred_json_file)
+        self.button_pred_json_file.pack()
+
+        self.button_val_seen_json_file = tk.Button(self, text="Select val_seen_json_file",
+                                                   command=self.load_val_seen_json_file)
+        self.button_val_seen_json_file.pack()
+
+        self.button_scene_directory = tk.Button(self, text="Select Scene Directory", command=self.load_scene_directory)
+        self.button_scene_directory.pack()
+
+        self.combo_episode_id = ttk.Combobox(self, textvariable=self.episode_id)
+        self.combo_episode_id.pack()
+
+        self.button_start = tk.Button(self, text="Start", command=self.start)
+        self.button_start.pack()
+
+    def load_pred_json_file(self):
+        self.pred_json_file = filedialog.askopenfilename()
+        # Update episode id choices based on the selected pred_json_file
+        with open(self.pred_json_file, 'r') as f:
+            pred_data = json.load(f)
+        self.combo_episode_id['values'] = list(pred_data.keys())
+
+    def load_val_seen_json_file(self):
+        self.val_seen_json_file = filedialog.askopenfilename()
+
+    def load_scene_directory(self):
+        self.scene_directory = filedialog.askdirectory()
+
+    def start(self):
+        selected_episode_id = self.episode_id.get()
+        visualize_trajectory(self.pred_json_file, self.val_seen_json_file, self.scene_directory, selected_episode_id)
+
+
+gui = GUI()
+gui.mainloop()
