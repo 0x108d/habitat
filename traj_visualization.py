@@ -172,7 +172,7 @@ def create_simulator(scene_file, sensor_height, sensor_width, width, height, top
     return sim
 
 
-def create_navmesh_map(sim, navmesh_file, map_height, floor_heights, height_samples=10):
+def create_navmesh_map(sim, navmesh_file, map_height, floor_heights, height_samples=50):
     sim.pathfinder.load_nav_mesh(navmesh_file)
     nav_bounds_min, nav_bounds_max = sim.pathfinder.get_bounds()
 
@@ -210,7 +210,19 @@ def create_navmesh_map(sim, navmesh_file, map_height, floor_heights, height_samp
                 color = tuple(int(val * 255) for val in color)
                 blank_map[y, x] = color
             else:
-                blank_map[y, x] = 255
+                blank_map[y, x] = (192, 192, 192)
+        # Draw grid lines
+        grid_size = 20
+        grid_color = (128, 128, 128)
+        grid_thickness = 1  # Thickness of the grid lines
+
+        # Draw vertical lines
+        for i in range(0, map_size[0], grid_size):
+            cv2.line(blank_map, (i, 0), (i, map_size[1]), grid_color, grid_thickness)
+
+        # Draw horizontal lines
+        for i in range(0, map_size[1], grid_size):
+            cv2.line(blank_map, (0, i), (map_size[0], i), grid_color, grid_thickness)
 
     return blank_map, map_size, nav_bounds_min, nav_bounds_max
 
@@ -278,6 +290,18 @@ def interpolate_rotations(rotations, num_interpolated_points):
     return interpolated_rotations
 
 
+def find_closest_point(reference_path, agent_position):
+    # Convert lists to numpy arrays for vectorized operations
+    reference_path_np = np.array(reference_path)
+    agent_position_np = np.array(agent_position)
+
+    # Calculate squared distances
+    squared_distances = np.sum((reference_path_np - agent_position_np) ** 2, axis=1)
+
+    # Return the index of the closest point
+    return np.argmin(squared_distances)
+
+
 def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, selected_episode_id, hfov,
                          vfov, topdown_vfov):
     # loading JSON file
@@ -322,7 +346,7 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, se
                                                                                  floor_heights)
 
         # Draw the path on the map
-        draw_path_on_map(blank_map, reference_path, map_size, nav_bounds_min, nav_bounds_max)
+        # draw_path_on_map(blank_map, reference_path, map_size, nav_bounds_min, nav_bounds_max)
 
         # if not path:
         #     continue
@@ -345,6 +369,7 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, se
 
         paused = False
         i = 0
+        blank_map_original = blank_map.copy()
         while i < len(interpolated_path) - 1:
             # Check for keyboard input
             key = cv2.waitKey(40) & 0xFF
@@ -370,6 +395,10 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, se
                 i += 1
                 agent_state.position = interpolated_path[i]
                 agent_state.rotation = quat_from_coeffs(interpolated_rotations[i])
+            # Draw the reference path up to the closest point to the current position
+            closest_point_index = find_closest_point(reference_path, agent_state.position)
+            draw_path_on_map(blank_map, reference_path[:closest_point_index + 1], map_size, nav_bounds_min,
+                             nav_bounds_max)
 
             sim.agents[0].set_state(agent_state, reset_sensors=True)
 
@@ -454,7 +483,6 @@ class GUI(QMainWindow):
         self.button_start = QPushButton("Start", self)
         self.button_start.clicked.connect(self.start)
 
-
         layout.addWidget(self.button_pred_json_file)
         layout.addWidget(self.button_val_seen_json_file)
         layout.addWidget(self.button_scene_directory)
@@ -511,7 +539,7 @@ class GUI(QMainWindow):
         vfov = int(self.vfov_entry.text())
         topdown_vfov = int(self.topdown_vfov_entry.text())
         visualize_trajectory(self.pred_json_file, self.val_seen_json_file, self.scene_directory, selected_episode_id,
-                              hfov, vfov, topdown_vfov)
+                             hfov, vfov, topdown_vfov)
 
 
 def main():
