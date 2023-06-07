@@ -1,8 +1,8 @@
-import argparse
+from PyQt5.QtWidgets import *
+from PyQt5.QtCore import *
 import json
-import threading
-from PIL import Image, ImageTk
-from tkinter import Label, StringVar, W, filedialog, messagebox, Tk, Frame, Button, BOTH, OptionMenu, StringVar, Listbox
+from tkinter import filedialog, messagebox
+import sys
 from scipy.interpolate import CubicSpline
 import numpy as np
 import os
@@ -10,10 +10,11 @@ import habitat_sim
 from habitat_sim.utils.common import quat_from_coeffs
 from scipy.spatial.transform import Rotation, Slerp
 import scipy.interpolate
-import tkinter as tk
-from tkinter import filedialog, ttk, messagebox
 import cv2
 import matplotlib.pyplot as plt
+from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtWidgets import QApplication, QMainWindow, QProgressBar, QPushButton
+import time
 
 
 def parse_house_file(file_path):
@@ -37,7 +38,6 @@ def determine_floor(height, floor_heights):
 
 
 def adjust_floor_heights(floor_heights):
-    # Prepare a new dictionary to hold the adjusted heights
     adjusted_floor_heights = {}
 
     # Determine the min and max height of the building
@@ -47,15 +47,12 @@ def adjust_floor_heights(floor_heights):
     # Calculate the total height of the building
     total_height = max_height - min_height
 
-    # Assign the top floor (highest index) its max height, and calculate downwards
     for floor in reversed(sorted(floor_heights.keys())):
         if floor == 0:
             # The bottom floor's min height is the minimum height of the building
             adjusted_floor_heights[floor] = (min_height, min_height + total_height * (
                     (floor_heights[floor][1] - floor_heights[floor][0]) / total_height))
         else:
-            # The top floor's max height is the current max height
-            # The min height is calculated by subtracting the height of this floor from the current max height
             floor_height = total_height * ((floor_heights[floor][1] - floor_heights[floor][0]) / total_height)
             adjusted_floor_heights[floor] = (max_height - floor_height, max_height)
             max_height -= floor_height
@@ -281,115 +278,13 @@ def interpolate_rotations(rotations, num_interpolated_points):
     return interpolated_rotations
 
 
-class GUI(tk.Tk):
-    def __init__(self):
-        tk.Tk.__init__(self)
-        self.pred_json_file = None
-        self.val_seen_json_file = None
-        self.scene_directory = None
-        self.episode_id = tk.StringVar()
-
-        self.button_pred_json_file = tk.Button(self, text="Select Pred_val_seen", command=self.load_pred_json_file)
-        self.button_pred_json_file.pack()
-
-        self.button_val_seen_json_file = tk.Button(self, text="Select val_seen",
-                                                   command=self.load_val_seen_json_file)
-        self.button_val_seen_json_file.pack()
-
-        self.button_scene_directory = tk.Button(self, text="Select Scene Directory", command=self.load_scene_directory)
-        self.button_scene_directory.pack()
-
-        self.episode_id_label = tk.Label(self, text="Enter Episode ID:")
-        self.episode_id_label.pack()
-
-        self.combo_episode_id = ttk.Combobox(self, textvariable=self.episode_id)
-        self.combo_episode_id.pack()
-        self.episode_range_label = tk.Label(self)
-        self.episode_range_label.pack()
-        # Create string variables to hold the user's inputs
-        self.hfov = tk.StringVar()
-        self.vfov = tk.StringVar()
-        self.topdown_vfov = tk.StringVar()
-
-        # Add entries for hfov, vfov and topdown_vfov
-        self.hfov_label = tk.Label(self, text="Enter hfov:")
-        self.hfov_label.pack()
-        self.hfov_entry = tk.Entry(self, textvariable=self.hfov)
-        self.hfov_entry.pack()
-
-        self.vfov_label = tk.Label(self, text="Enter vfov:")
-        self.vfov_label.pack()
-        self.vfov_entry = tk.Entry(self, textvariable=self.vfov)
-        self.vfov_entry.pack()
-
-        self.topdown_vfov_label = tk.Label(self, text="Enter topdown_vfov:")
-        self.topdown_vfov_label.pack()
-        self.topdown_vfov_entry = tk.Entry(self, textvariable=self.topdown_vfov)
-        self.topdown_vfov_entry.pack()
-
-        self.episode_id_label = tk.Label(self, text="Instruction:")
-        self.episode_id_label.pack()
-        self.instruction_text_widget = tk.Text(self, wrap=tk.WORD, font=("Helvetica", 16, "bold"))
-        self.instruction_text_widget.pack(fill=tk.Y)
-
-        self.button_start = tk.Button(self, text="Start", command=self.start)
-        self.button_start.pack()
-
-        self.progressbar = ttk.Progressbar(self, mode='determinate')
-        self.progressbar.pack()
-
-    def load_pred_json_file(self):
-        self.pred_json_file = filedialog.askopenfilename()
-        # Update episode id choices based on the selected pred_json_file
-        with open(self.pred_json_file, 'r') as f:
-            pred_data = json.load(f)
-        episode_ids = sorted(list(map(int, pred_data.keys())))  # Convert keys to integers
-        self.combo_episode_id['values'] = episode_ids
-        self.episode_range_label['text'] = f"Episode range: {min(episode_ids)} - {max(episode_ids)}"
-
-    def load_val_seen_json_file(self):
-        self.val_seen_json_file = filedialog.askopenfilename()
-
-    def load_scene_directory(self):
-        self.scene_directory = filedialog.askdirectory()
-
-    def start(self):
-        selected_episode_id = self.episode_id.get()
-        if selected_episode_id not in self.combo_episode_id['values']:
-            messagebox.showerror("Invalid input", "The episode ID you entered does not exist.")
-            return
-
-        # Get the episode from the val_seen data
-        with open(self.val_seen_json_file, 'r') as f:
-            val_seen_data = json.load(f)
-        # Find the corresponding episode in the val_seen data
-        episode = next((ep for ep in val_seen_data['episodes'] if str(ep['episode_id']) == selected_episode_id),
-                       None)
-        if episode is None:  # No matching episode was found
-            print(f"Episode {selected_episode_id} not found in val_seen.json")
-            return
-
-        # Display the reference path and instruction
-        self.instruction_text_widget.config(state=tk.NORMAL)
-        self.instruction_text_widget.delete('1.0', tk.END)  # clear previous text
-        self.instruction_text_widget.insert(tk.END, "Instruction:\n" + str(episode['instruction']['instruction_text']))
-        self.instruction_text_widget.config(state=tk.DISABLED)
-        hfov = float(self.hfov.get())
-        vfov = int(self.vfov.get())
-        topdown_vfov = int(self.topdown_vfov.get())
-        visualize_trajectory(self.pred_json_file, self.val_seen_json_file, self.scene_directory, selected_episode_id,
-                             self.progressbar, hfov, vfov, topdown_vfov)
-
-
-def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, selected_episode_id, progressbar, hfov,
+def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, selected_episode_id, hfov,
                          vfov, topdown_vfov):
     # loading JSON file
     pred_episode_steps, val_episode, val_seen_data = load_data(pred_json_file, val_seen_json_file, selected_episode_id)
     if pred_episode_steps is None or val_episode is None or val_seen_data is None:
         return
     else:
-        progressbar["value"] = 10
-        progressbar.update()
         reference_path = val_episode["reference_path"]
         print(f"Reference Path: {reference_path}")
         instruction_text = val_episode["instruction"]
@@ -410,56 +305,44 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, se
         sensor_width = 1280
         width = 1280
         height = 640
-        top_down_width = 1080
+        top_down_width = 720
         top_down_height = 1280
         # hfov = 3.5
         # vfov = 50
         # topdown_vfov = 45
         # center_coordinates = [0, 2.5, 0]
-        progressbar["value"] = 20
-        progressbar.update()
+
         sim = create_simulator(scene_file, sensor_height, sensor_width, width, height, top_down_width, top_down_height,
                                hfov,
                                vfov, topdown_vfov)
-        progressbar["value"] = 30
-        progressbar.update()
+
         # set up 2d map
         map_height = height  # specify desired map height
         blank_map, map_size, nav_bounds_min, nav_bounds_max = create_navmesh_map(sim, navmesh_file, map_height,
                                                                                  floor_heights)
-        progressbar["value"] = 40
-        progressbar.update()
+
         # Draw the path on the map
         draw_path_on_map(blank_map, reference_path, map_size, nav_bounds_min, nav_bounds_max)
-        progressbar["value"] = 50
-        progressbar.update()
+
         # if not path:
         #     continue
         num_interpolated_points = 600
         # Calculate rotations and skipped indices
         rotations, skipped_indices = calculate_rotations(path)
-        progressbar["value"] = 60
-        progressbar.update()
 
         # Remove skipped indices from the path
         path = remove_skipped_indices(path, skipped_indices)
-        progressbar["value"] = 70
-        progressbar.update()
 
         # Interpolate the path and rotations
         interpolated_path = interpolate_path(path, num_interpolated_points)
-        progressbar["value"] = 80
-        progressbar.update()
+
         interpolated_rotations = interpolate_rotations(rotations, num_interpolated_points)
 
-        progressbar["value"] = 90
-        progressbar.update()
         rotation_increment = np.pi / 18  # Rotate by 10 degrees at a time
         agent_state = habitat_sim.AgentState()
         agent_state.position = interpolated_path[0]
         agent_state.rotation = quat_from_coeffs(interpolated_rotations[0])
-        progressbar["value"] = 100
-        progressbar.update()
+
         paused = False
         i = 0
         while i < len(interpolated_path) - 1:
@@ -496,8 +379,6 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, se
             agent_state_top_down.rotation = habitat_sim.utils.common.quat_from_angle_axis(-np.pi / 2,
                                                                                           np.array([1, 0, 0]))
             sim.agents[1].set_state(agent_state_top_down, reset_sensors=True)
-            progress_percentage = (i / len(interpolated_path)) * 100
-            progressbar['value'] = progress_percentage
             # Capture and display the image
             observations = sim.get_sensor_observations()
             topdown_observation = observations["topdown_sensor"]
@@ -527,5 +408,118 @@ def visualize_trajectory(pred_json_file, val_seen_json_file, scene_directory, se
                 break
 
 
-gui = GUI()
-gui.mainloop()
+class GUI(QMainWindow):
+    def __init__(self):
+        super(GUI, self).__init__()
+
+        self.pred_json_file = None
+        self.val_seen_json_file = None
+        self.scene_directory = None
+
+        self.initUI()
+
+    def initUI(self):
+        centralWidget = QWidget()
+        self.setCentralWidget(centralWidget)
+
+        layout = QVBoxLayout()
+
+        self.button_pred_json_file = QPushButton("Select Pred_val_seen", self)
+        self.button_pred_json_file.clicked.connect(self.load_pred_json_file)
+
+        self.button_val_seen_json_file = QPushButton("Select val_seen", self)
+        self.button_val_seen_json_file.clicked.connect(self.load_val_seen_json_file)
+
+        self.button_scene_directory = QPushButton("Select Scene Directory", self)
+        self.button_scene_directory.clicked.connect(self.load_scene_directory)
+
+        self.episode_id_label = QLabel("Enter Episode ID:", self)
+        self.combo_episode_id = QComboBox(self)
+        self.episode_range_label = QLabel(self)
+        self.combo_episode_id.setEditable(True)
+
+        self.hfov_label = QLabel("Enter hfov(Range 1.0-5):", self)
+        self.hfov_entry = QLineEdit(self)
+
+        self.vfov_label = QLabel("Enter vfov(Range 10-50):", self)
+        self.vfov_entry = QLineEdit(self)
+
+        self.topdown_vfov_label = QLabel("Enter topdown_vfov(Range 10-50):", self)
+        self.topdown_vfov_entry = QLineEdit(self)
+
+        self.instruction_label = QLabel("Instruction:", self)
+        self.instruction_text_widget = QTextEdit(self)
+        self.instruction_text_widget.setReadOnly(True)
+
+        self.button_start = QPushButton("Start", self)
+        self.button_start.clicked.connect(self.start)
+
+
+        layout.addWidget(self.button_pred_json_file)
+        layout.addWidget(self.button_val_seen_json_file)
+        layout.addWidget(self.button_scene_directory)
+        layout.addWidget(self.episode_id_label)
+        layout.addWidget(self.combo_episode_id)
+        layout.addWidget(self.episode_range_label)
+        layout.addWidget(self.hfov_label)
+        layout.addWidget(self.hfov_entry)
+        layout.addWidget(self.vfov_label)
+        layout.addWidget(self.vfov_entry)
+        layout.addWidget(self.topdown_vfov_label)
+        layout.addWidget(self.topdown_vfov_entry)
+        layout.addWidget(self.instruction_label)
+        layout.addWidget(self.instruction_text_widget)
+        layout.addWidget(self.button_start)
+
+        centralWidget.setLayout(layout)
+
+    def load_pred_json_file(self):
+        self.pred_json_file = QFileDialog.getOpenFileName(self, 'Open file', '/home')[0]
+        # Update episode id choices based on the selected pred_json_file
+        with open(self.pred_json_file, 'r') as f:
+            pred_data = json.load(f)
+        episode_ids = sorted(list(map(int, pred_data.keys())))
+        self.combo_episode_id.addItems([str(e) for e in episode_ids])
+        self.episode_range_label.setText(f"Episode range: {min(episode_ids)} - {max(episode_ids)}")
+
+    def load_val_seen_json_file(self):
+        self.val_seen_json_file = QFileDialog.getOpenFileName(self, 'Open file', '/home')[0]
+
+    def load_scene_directory(self):
+        self.scene_directory = QFileDialog.getExistingDirectory(self, "Select Directory")
+
+    def start(self):
+        selected_episode_id = self.combo_episode_id.currentText()
+        if selected_episode_id not in [self.combo_episode_id.itemText(i) for i in range(self.combo_episode_id.count())]:
+            QMessageBox.critical(self, "Invalid input", "The episode ID you entered does not exist.")
+            return
+
+        # Get the episode from the val_seen data
+        with open(self.val_seen_json_file, 'r') as f:
+            val_seen_data = json.load(f)
+        # Find the corresponding episode in the val_seen data
+        episode = next((ep for ep in val_seen_data['episodes'] if str(ep['episode_id']) == selected_episode_id),
+                       None)
+        if episode is None:  # No matching episode was found
+            print(f"Episode {selected_episode_id} not found in val_seen.json")
+            return
+
+        # Display instruction
+        self.instruction_text_widget.setPlainText("Instruction:\n" + str(episode['instruction']['instruction_text']))
+
+        hfov = float(self.hfov_entry.text())
+        vfov = int(self.vfov_entry.text())
+        topdown_vfov = int(self.topdown_vfov_entry.text())
+        visualize_trajectory(self.pred_json_file, self.val_seen_json_file, self.scene_directory, selected_episode_id,
+                              hfov, vfov, topdown_vfov)
+
+
+def main():
+    app = QApplication(sys.argv)
+    ex = GUI()
+    ex.show()
+    sys.exit(app.exec_())
+
+
+if __name__ == '__main__':
+    main()
